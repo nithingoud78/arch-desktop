@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""
+Normalized Logical Brightness Controller for Arch Linux / Hyprland / Waybar.
+Maps hardware range [MIN_RAW=2, MAX_RAW=254] to logical user-facing [0%, 100%].
+Safe: NEVER sets hardware brightness below MIN_RAW (never turns screen off).
+"""
+
+import sys
+import os
+import json
+import subprocess
+
+MIN_RAW = 2
+MAX_RAW = 254
+RANGE_RAW = MAX_RAW - MIN_RAW  # 252
+
+BACKLIGHT_SYS_DIR = "/sys/class/backlight/nvidia_wmi_ec_backlight"
+BRIGHTNESS_FILE = os.path.join(BACKLIGHT_SYS_DIR, "brightness")
+
+def get_current_raw() -> int:
+    try:
+        with open(BRIGHTNESS_FILE, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        # Fallback to brightnessctl
+        res = subprocess.check_output(["brightnessctl", "get"]).decode().strip()
+        return int(res)
+
+def raw_to_logical(raw: int) -> int:
+    if raw <= MIN_RAW:
+        return 0
+    if raw >= MAX_RAW:
+        return 100
+    return round((raw - MIN_RAW) * 100.0 / RANGE_RAW)
+
+def logical_to_raw(logical: int) -> int:
+    clamped = max(0, min(100, logical))
+    if clamped == 0:
+        return MIN_RAW
+    if clamped == 100:
+        return MAX_RAW
+    return MIN_RAW + round(clamped * RANGE_RAW / 100.0)
+
+def set_raw(raw: int):
+    safe_raw = max(MIN_RAW, min(MAX_RAW, raw))
+    subprocess.run(["brightnessctl", "set", str(safe_raw)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Signal Waybar to refresh custom/backlight immediately
+    subprocess.run(["pkill", "-RTMIN+8", "waybar"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def cmd_get():
+    raw = get_current_raw()
+    logical = raw_to_logical(raw)
+    data = {
+        "text": "",
+        "alt": "",
+        "tooltip": f"Brightness: {logical}%",
+        "class": "backlight",
+        "percentage": logical
+    }
+    print(json.dumps(data))
+
+def cmd_adjust(delta: int):
+    raw = get_current_raw()
+    current_logical = raw_to_logical(raw)
+    new_logical = max(0, min(100, current_logical + delta))
+    new_raw = logical_to_raw(new_logical)
+    set_raw(new_raw)
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] == "get":
+        cmd_get()
+    elif sys.argv[1] == "up":
+        step = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+        cmd_adjust(step)
+    elif sys.argv[1] == "down":
+        step = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+        cmd_adjust(-step)
+    elif sys.argv[1] == "set":
+        target = int(sys.argv[2]) if len(sys.argv) > 2 else 50
+        set_raw(logical_to_raw(target))
+    else:
+        cmd_get()
+
+if __name__ == "__main__":
+    main()
+

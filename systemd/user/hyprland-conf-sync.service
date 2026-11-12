@@ -1,0 +1,7 @@
+[Unit]
+Description=Validate and reload Hyprland configuration
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/nithin/.local/bin/hyprland-conf-reload

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -u
+
+export PATH="$HOME/.local/bin:$PATH"
+
+state="$HOME/.local/state/hypr-capture"
+rec_dir="$HOME/Videos/Nithin/ScreenRecordings"
+mkdir -p "$state" "$rec_dir" "$HOME/Videos/ScreenRecordings"
+
+pidfile="$state/recording.pid"
+pathfile="$state/recording.path"
+logfile="$state/wf-recorder.log"
+
+# Detect an active recording started by this script
+pid=""
+if [[ -s "$pidfile" ]]; then
+    candidate="$(cat "$pidfile")"
+    if [[ "$candidate" =~ ^[0-9]+$ ]] &&
+       kill -0 "$candidate" 2>/dev/null &&
+       [[ "$(ps -p "$candidate" -o comm= 2>/dev/null | tr -d ' ')" == "wf-recorder" ]]; then
+        pid="$candidate"
+    else
+        rm -f "$pidfile" "$pathfile"
+    fi
+fi
+
+if [[ -n "$pid" ]]; then
+    video="$(cat "$pathfile" 2>/dev/null || true)"
+
+    kill -INT "$pid" 2>/dev/null || true
+
+    # Allow the recorder to finish writing the video
+    for _ in {1..100}; do
+        state_line="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+        if [[ -z "$state_line" || "$state_line" == Z* ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    state_line="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+    if [[ -n "$state_line" && "$state_line" != Z* ]] &&
+       [[ "$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')" == "wf-recorder" ]]; then
+        command -v notify-send >/dev/null 2>&1 &&
+            notify-send "Recording still stopping" "Check the recorder before trying again."
+        exit 1
+    fi
+
+    rm -f "$pidfile" "$pathfile"
+
+    if [[ -s "$video" ]]; then
+        # Copy a file reference, not the video bytes
+        printf 'file://%s\r\n' "$video" | wl-copy --type text/uri-list
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send "Recording saved" "Video saved and copied to clipboard."
+        fi
+        exit 0
+    else
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send "Recording problem" "Check $logfile"
+        fi
+        exit 1
+    fi
+else
+    video="$rec_dir/recording-$(date +%F_%H-%M-%S)-$$.mp4"
+
+    wf-recorder -f "$video" </dev/null >"$logfile" 2>&1 &
+    pid=$!
+
+    printf '%s\n' "$pid" > "$pidfile"
+    printf '%s\n' "$video" > "$pathfile"
+
+    sleep 1
+
+    if ! kill -0 "$pid" 2>/dev/null ||
+       [[ "$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')" != "wf-recorder" ]]; then
+        rm -f "$pidfile" "$pathfile"
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send "Recording failed" "Check $logfile"
+        fi
+        exit 1
+    fi
+
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Recording started" "Press the recording shortcut again to stop."
+    fi
+    exit 0
+fi

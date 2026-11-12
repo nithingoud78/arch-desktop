@@ -1,0 +1,39 @@
+# Python bytecode & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Backups, swap & temporary files
+*.bak
+*.bak*
+*.orig
+*.tmp
+*.swp
+*~
+backups/
+
+# Runtime & state artifacts
+*.log
+*.pid
+*.rect
+*.state
+*.sock
+
+# OS & editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Media / captures / generated images (allow Pictures/Wallpapers/)
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+!Pictures/
+!Pictures/Wallpapers/
+!Pictures/Wallpapers/**
+

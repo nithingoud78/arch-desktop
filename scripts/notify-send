@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import sys
+import subprocess
+
+args = sys.argv[1:]
+summary = ""
+body = ""
+app_name = "Desktop"
+
+# Filter out common flags like -u critical, -a app, -t timeout, etc.
+clean_args = []
+skip_next = False
+for i, arg in enumerate(args):
+    if skip_next:
+        skip_next = False
+        continue
+    if arg in ("-u", "-a", "-t", "-i", "-c"):
+        skip_next = True
+        continue
+    if arg.startswith("-"):
+        continue
+    clean_args.append(arg)
+
+if len(clean_args) >= 1:
+    summary = clean_args[0]
+if len(clean_args) >= 2:
+    body = clean_args[1]
+
+if summary:
+    cmd = [
+        "gdbus", "call", "--session",
+        "--dest", "org.freedesktop.Notifications",
+        "--object-path", "/org/freedesktop/Notifications",
+        "--method", "org.freedesktop.Notifications.Notify",
+        app_name, "0", "", summary, body, "[]", "{}", "5000"
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

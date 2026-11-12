@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""
+Reversible Show-Desktop Toggle for Hyprland (0.57+ Lua IPC)
+- Clicking once on any normal workspace switches cleanly to an empty 'desktop'
+  workspace without moving, reordering, swapping, or killing any active windows.
+- Clicking again while on the empty desktop restores the exact prior workspace
+  with all windows preserved in their original positions and layouts.
+"""
+
+import sys
+import os
+import json
+import socket
+import subprocess
+
+STATE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "hypr_show_desktop.json")
+DESKTOP_WS_NAME = "desktop"
+
+
+def _find_hypr_socket():
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if sig:
+        sock = os.path.join(runtime_dir, "hypr", sig, ".socket.sock")
+        if os.path.exists(sock):
+            return sock
+    hypr_dir = os.path.join(runtime_dir, "hypr")
+    if os.path.isdir(hypr_dir):
+        try:
+            candidates = sorted(
+                (os.path.getmtime(os.path.join(hypr_dir, d)), d)
+                for d in os.listdir(hypr_dir)
+                if os.path.isdir(os.path.join(hypr_dir, d))
+            )
+            for _, d in reversed(candidates):
+                sock = os.path.join(hypr_dir, d, ".socket.sock")
+                if os.path.exists(sock):
+                    return sock
+        except Exception:
+            pass
+    return None
+
+
+def _hypr_eval(lua_code):
+    sock = _find_hypr_socket()
+    if sock:
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(sock)
+            s.sendall(f"eval {lua_code}".encode("utf-8"))
+            s.recv(1024)
+            s.close()
+            return True
+        except Exception:
+            pass
+    return subprocess.call(["hyprctl", "eval", lua_code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+
+def run_hyprctl(args):
+    return subprocess.check_output(["hyprctl", "-j"] + args).decode("utf-8")
+
+
+def _focus_workspace(target):
+    if isinstance(target, int):
+        lua = f"hl.dispatch(hl.dsp.focus({{ workspace = {target} }}))"
+    else:
+        lua = f"hl.dispatch(hl.dsp.focus({{ workspace = {json.dumps(str(target))} }}))"
+    _hypr_eval(lua)
+
+
+def main():
+    try:
+        ws_info = json.loads(run_hyprctl(["activeworkspace"]))
+    except Exception as e:
+        sys.stderr.write(f"Error reading activeworkspace: {e}\n")
+        return
+
+    cur_name = str(ws_info.get("name", ""))
+    cur_id = ws_info.get("id")
+
+    # Also ensure special:desktop overlay isn't accidentally left open
+    try:
+        mons = json.loads(run_hyprctl(["monitors"]))
+        if mons and mons[0].get("specialWorkspace", {}).get("name") == "special:desktop":
+            _hypr_eval("hl.dispatch(hl.dsp.workspace.toggle_special('desktop'))")
+    except Exception:
+        pass
+
+    if cur_name == DESKTOP_WS_NAME:
+        target_ws = 1
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r") as f:
+                    data = json.load(f)
+                saved_id = data.get("workspace_id")
+                saved_name = data.get("workspace_name")
+                if isinstance(saved_id, int) and saved_id > 0:
+                    target_ws = saved_id
+                elif saved_name and saved_name != DESKTOP_WS_NAME:
+                    target_ws = str(saved_name)
+            except Exception:
+                pass
+            try:
+                os.remove(STATE_FILE)
+            except Exception:
+                pass
+        _focus_workspace(target_ws)
+        return
+
+    # Save current workspace and switch cleanly to empty desktop workspace
+    try:
+        state = {
+            "workspace_id": int(cur_id) if isinstance(cur_id, int) and cur_id > 0 else None,
+            "workspace_name": cur_name or "1",
+        }
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f)
+        _focus_workspace(f"name:{DESKTOP_WS_NAME}")
+    except Exception as e:
+        sys.stderr.write(f"Error toggling desktop: {e}\n")
+
+
+if __name__ == "__main__":
+    main()

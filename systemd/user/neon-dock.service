@@ -1,0 +1,15 @@
+[Unit]
+Description=Neon Desktop Bottom Dock
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/home/nithin/.local/bin/neon-dock
+Restart=on-failure
+RestartSec=3
+KillMode=process
+
+[Install]
+WantedBy=graphical-session.target
+

@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch hyprland.conf for changes and reload Hyprland
+PartOf=graphical-session.target
+
+[Path]
+PathModified=%h/.config/hypr/hyprland.conf
+PathChanged=%h/.config/hypr/hyprland.conf
+Unit=hyprland-conf-sync.service
+
+[Install]
+WantedBy=graphical-session.target

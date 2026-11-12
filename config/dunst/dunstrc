@@ -1,0 +1,74 @@
+# ==============================================================================
+# macOS Sequoia / Tahoe — Dunst Notification Daemon Configuration
+# ==============================================================================
+
+[global]
+    ### Geometry & Position ###
+    origin = top-right
+    offset = (16, 42)
+    width = (280, 400)
+    height = (60, 220)
+    notification_limit = 5
+
+    ### Typography ###
+    font = Adwaita Sans 11
+    line_height = 4
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = left
+    vertical_alignment = center
+    show_age_threshold = 60
+    word_wrap = yes
+    ellipsize = middle
+
+    ### Appearance & Styling ###
+    transparency = 12
+    corner_radius = 14
+    frame_width = 1
+    gap_size = 8
+    padding = 12
+    horizontal_padding = 16
+    text_icon_padding = 12
+
+    ### Progress Bar ###
+    progress_bar = true
+    progress_bar_height = 6
+    progress_bar_frame_width = 0
+    progress_bar_min_width = 180
+    progress_bar_max_width = 340
+    progress_bar_corner_radius = 3
+
+    ### Icons ###
+    enable_recursive_icon_lookup = true
+    icon_theme = Adwaita
+    icon_position = left
+    min_icon_size = 32
+    max_icon_size = 48
+
+    ### Behavior ###
+    idle_threshold = 120
+    show_indicators = no
+    mouse_left_click = close_current
+    mouse_middle_click = do_action, close_current
+    mouse_right_click = close_all
+
+[urgency_low]
+    background = "#17263dE6"
+    foreground = "#F5F6FA"
+    frame_color = "#202e4d"
+    highlight = "#a4c1ea"
+    timeout = 4
+
+[urgency_normal]
+    background = "#17263dE6"
+    foreground = "#F5F6FA"
+    frame_color = "#a4c1ea"
+    highlight = "#a4c1ea"
+    timeout = 6
+
+[urgency_critical]
+    background = "#241725F0"
+    foreground = "#F5F6FA"
+    frame_color = "#EA6962"
+    highlight = "#EA6962"
+    timeout = 0

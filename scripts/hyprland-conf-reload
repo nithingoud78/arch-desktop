@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -u
+
+CONF="$HOME/.config/hypr/hyprland.conf"
+LUA="$HOME/.config/hypr/hyprland.lua"
+
+# Check if Hyprland is active
+if ! pgrep -u "$USER" -x Hyprland >/dev/null 2>&1; then
+    exit 0
+fi
+
+# Validate configuration using Hyprland verify-config
+output=$(Hyprland --verify-config -c "$LUA" 2>&1)
+status=$?
+
+if [ $status -eq 0 ]; then
+    # Validation succeeded; reload running compositor
+    /usr/bin/hyprctl reload >/dev/null 2>&1
+    exit 0
+else
+    # Validation failed; protect running desktop and report error
+    err=$(echo "$output" | grep -iE "error|failed" | head -n 3)
+    if [ -z "$err" ]; then
+        err="Validation failed for hyprland.conf"
+    fi
+    command -v notify-send >/dev/null 2>&1 &&
+        notify-send -u critical "Hyprland Configuration Error" "$err\nPrevious working configuration kept running."
+    echo "[hyprland-conf-reload error] Configuration validation failed:" >&2
+    echo "$output" >&2
+    exit 1
+fi
+

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Master Purple/Lavender Theme — Desktop Suite Launcher
+# ==============================================================================
+
+# 1. Systemd managed desktop services
+systemctl --user restart waybar 2>/dev/null || true
+systemctl --user restart hyprpaper 2>/dev/null || true
+systemctl --user restart dunst 2>/dev/null || true
+systemctl --user restart neon-dock 2>/dev/null || true
+systemctl --user restart system-monitor 2>/dev/null || true
+systemctl --user restart control-center 2>/dev/null || true
+systemctl --user restart waybar-cc-arrow 2>/dev/null || true

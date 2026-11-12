@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Graceful Hyprland Session Shutdown / Exit
+# ==============================================================================
+
+if command -v hyprshutdown >/dev/null 2>&1; then
+    exec hyprshutdown
+elif command -v uwsm >/dev/null 2>&1; then
+    exec uwsm stop
+else
+    exec hyprctl dispatch exit
+fi
+

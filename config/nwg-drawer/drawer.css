@@ -1,0 +1,71 @@
+/* ==============================================================================
+# Adaptive Wallpaper Theme — nwg-drawer (Launchpad) Styling
+# ============================================================================== */
+
+window {
+    background-color: rgba(22, 33, 51, 0.85);
+    color: #FDFBFE;
+    font-family: "Adwaita Sans", sans-serif;
+}
+
+/* Centered spotlight-style search entry */
+entry {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(164, 193, 234, 0.30);
+    border-radius: 18px;
+    color: #FDFBFE;
+    padding: 8px 16px;
+    margin: 20px 80px;
+    font-size: 14px;
+}
+
+entry:focus {
+    border-color: #3c7ad2;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Application items */
+button, image {
+    background: none;
+    border: none;
+}
+
+button {
+    border-radius: 14px;
+    padding: 10px;
+    transition: all 180ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+button:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Category buttons */
+#category-button {
+    margin: 0 8px;
+    padding: 4px 12px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+#category-button:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #5e7eda;
+}
+
+#pinned-box {
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(164, 193, 234, 0.24);
+}
+
+#files-box {
+    padding: 8px;
+    border: 1px solid rgba(164, 193, 234, 0.24);
+    border-radius: 14px;
+}
+
+#math-label {
+    font-weight: 600;
+    font-size: 16px;
+    color: #5e7eda;
+}
