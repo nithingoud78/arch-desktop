@@ -3089,10 +3089,11 @@ class NeonDockApp(Gtk.Window):
         self.update_dock_capacity(animated=False)
         if not getattr(self, "autohide", True):
             self._show_dock()
-        elif self._is_cursor_in_dock_zone():
+        elif self._is_cursor_at_bottom_edge():
             self._show_dock()
         else:
             self._hide_dock()
+            self.hide()
 
     def _poll_edge_trigger(self):
         if not getattr(self, "autohide", True):
@@ -3100,7 +3101,7 @@ class NeonDockApp(Gtk.Window):
                 self._show_dock()
             return True
         if not self._dock_target_open:
-            if self._is_cursor_in_dock_zone():
+            if self._is_cursor_at_bottom_edge():
                 self._show_dock()
         return True
 
@@ -3127,13 +3128,13 @@ class NeonDockApp(Gtk.Window):
 
         ev_box = Gtk.EventBox()
         ev_box.set_name("neon-dock-edge-box")
-        ev_box.set_size_request(-1, 3)
+        ev_box.set_size_request(-1, 2)
         ev_box.set_hexpand(True)
         ev_box.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
         ev_box.connect("enter-notify-event", self._on_edge_enter)
         ev_box.connect("motion-notify-event", self._on_edge_enter)
         edge_css = Gtk.CssProvider()
-        edge_css.load_from_data(b"#neon-dock-edge, #neon-dock-edge-box { background-color: rgba(0, 0, 0, 0.004); }")
+        edge_css.load_from_data(b"#neon-dock-edge, #neon-dock-edge-box { background-color: rgba(0, 0, 0, 0.004); padding: 0; margin: 0; border: none; min-height: 2px; }")
         ev_box.get_style_context().add_provider(edge_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         trig.get_style_context().add_provider(edge_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         trig.add(ev_box)
@@ -3142,16 +3143,38 @@ class NeonDockApp(Gtk.Window):
         trig.connect("motion-notify-event", self._on_edge_enter)
         return trig
 
-    def _get_screen_height(self):
+    def _get_monitor_geometry(self):
         try:
             disp = Gdk.Display.get_default()
             if disp:
                 mon = disp.get_primary_monitor() or disp.get_monitor(0)
                 if mon:
-                    return max(200, int(mon.get_geometry().height))
+                    return mon.get_geometry()
         except Exception:
             pass
+        return None
+
+    def _get_screen_height(self):
+        geom = self._get_monitor_geometry()
+        if geom:
+            return max(200, int(geom.height))
         return 1000
+
+    def _is_cursor_at_bottom_edge(self):
+        pos = query_hypr_cursorpos(self._hypr_sock)
+        if pos is None:
+            self._hypr_sock = _find_hypr_socket()
+            pos = query_hypr_cursorpos(self._hypr_sock)
+        if pos is None:
+            return False
+        cx, cy = pos
+        geom = self._get_monitor_geometry()
+        if geom:
+            if not (geom.x <= cx <= (geom.x + geom.width)):
+                return False
+            return cy >= (geom.y + geom.height - 2)
+        sh = self._get_screen_height()
+        return cy >= (sh - 2)
 
     def _is_cursor_in_dock_zone(self):
         if getattr(self.notes_popup, "visible", False):
@@ -3159,10 +3182,18 @@ class NeonDockApp(Gtk.Window):
         pos = query_hypr_cursorpos(self._hypr_sock)
         if pos is None:
             self._hypr_sock = _find_hypr_socket()
+            pos = query_hypr_cursorpos(self._hypr_sock)
+        if pos is None:
             return self._pointer_inside
-        _, cy = pos
-        sh = self._get_screen_height()
-        return cy >= (sh - (DOCK_HEIGHT + 14))
+        cx, cy = pos
+        geom = self._get_monitor_geometry()
+        sh = int(geom.height) if geom else self._get_screen_height()
+        alloc = self.get_allocation()
+        win_h = alloc.height if alloc and alloc.height > 10 else (DOCK_HEIGHT + 14)
+        if geom:
+            if not (geom.x <= cx <= (geom.x + geom.width)):
+                return False
+        return cy >= (sh - (win_h + 8))
 
     def _cancel_hide_delay(self):
         if self._hide_delay_id is not None:
@@ -3179,14 +3210,16 @@ class NeonDockApp(Gtk.Window):
             self._hover_poll_id = None
 
     def _on_edge_enter(self, widget, event):
-        self._show_dock()
+        if not self._dock_target_open:
+            self._show_dock()
         return False
 
     def _on_dock_enter(self, widget, event):
         self._pointer_inside = True
         self._cancel_hide_delay()
         if not self._dock_target_open:
-            self._show_dock()
+            if not getattr(self, "autohide", True) or self._is_cursor_at_bottom_edge():
+                self._show_dock()
         return False
 
     def _on_dock_leave(self, widget, event):
@@ -3204,12 +3237,11 @@ class NeonDockApp(Gtk.Window):
         if not self._dock_target_open and not self._dock_revealer.get_child_revealed():
             self._hover_poll_id = None
             return False
-        if self._is_cursor_in_dock_zone():
-            self._cancel_hide_delay()
-            if not self._dock_target_open:
-                self._show_dock()
-        else:
-            self._schedule_hide_check()
+        if self._dock_target_open:
+            if self._is_cursor_in_dock_zone():
+                self._cancel_hide_delay()
+            else:
+                self._schedule_hide_check()
         return True
 
     def _schedule_hide_check(self):
@@ -3255,6 +3287,8 @@ class NeonDockApp(Gtk.Window):
         self._cancel_hide_delay()
         self._ensure_hover_poll()
         self._dock_target_open = True
+        if hasattr(self, "_edge_trigger") and self._edge_trigger:
+            self._edge_trigger.hide()
         if not self.get_visible():
             self.show()
         self._dock_revealer.set_reveal_child(True)
@@ -3271,6 +3305,8 @@ class NeonDockApp(Gtk.Window):
             self._stop_hover_poll()
             self._update_cc_toggle_rect(False)
             self.hide()
+            if hasattr(self, "_edge_trigger") and self._edge_trigger:
+                self._edge_trigger.show_all()
         elif revealer.get_reveal_child() and revealer.get_child_revealed():
             self._update_cc_toggle_rect(True)
 
