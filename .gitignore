@@ -27,7 +27,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Media / captures / generated images (allow Pictures/Wallpapers/)
+# Media / captures / generated images (allow Pictures/Wallpapers/ and icons/)
 *.png
 *.jpg
 *.jpeg
@@ -36,4 +36,8 @@ Thumbs.db
 !Pictures/
 !Pictures/Wallpapers/
 !Pictures/Wallpapers/**
+!icons/
+!icons/**
+!assets/
+!assets/**
 

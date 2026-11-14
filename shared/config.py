@@ -13,9 +13,11 @@ NOTES_FILE = os.path.join(CONFIG_DIR, "notes.txt")
 
 DEFAULT_SETTINGS = {
     "wallpaper": "/home/nithin/Pictures/Wallpapers/Alpenglow Over Misty Mountain Peaks.png",
-    "theme_mode": "Auto",
+    "theme_mode": "Dark",
     "accent_color": "#a855f7",
     "palette_style": "Vivid",
+    "transparency": 70,
+    "blur_strength": 70,
     "transparency_blur": 70,
     "gradient_accents": True,
     "rounded_corners": 16,
@@ -24,16 +26,46 @@ DEFAULT_SETTINGS = {
     "translucent_panels": True,
     "enable_blur": True,
     "color_frame_to_accent": True,
+    "wallpaper_folder": os.path.expanduser("~/Pictures/Wallpapers"),
     "dock": {
         "position": "bottom",
-        "icon_size": 28,
-        "autohide": False,
+        "icon_size": 26,
+        "autohide": True,
+        "floating": True,
+        "transparency": 90,
+        "neon_glow_strength": 100,
+        "section_order": ["apps", "search", "snap", "notes", "modes", "player", "settings", "sysmon", "date", "systray"],
+        "enabled_sections": ["apps", "search", "snap", "notes", "modes", "player", "settings", "sysmon", "date", "systray"],
         "pinned": [
             {"id": "brave-browser", "name": "Brave", "icon": "brave-desktop"},
-            {"id": "kitty", "name": "Terminal", "icon": "kitty"},
+            {"id": "kitty", "name": "Terminal", "icon": "/home/nithin/.local/share/icons/kitty.png"},
             {"id": "org.kde.dolphin", "name": "Files", "icon": "org.kde.dolphin"},
             {"id": "antigravity-ide", "name": "Antigravity", "icon": "/home/nithin/.local/share/icons/antigravity-ide.png"}
         ]
+    },
+    "launcher": {
+        "banner_image": os.path.expanduser("~/.config/neon-desktop/assets/zoro-sunset.png"),
+        "transparency": 80,
+        "recent_count": 5
+    },
+    "display": {
+        "brightness": 80,
+        "night_light": False,
+        "night_light_temp": 4500
+    },
+    "sound": {
+        "output_volume": 50,
+        "input_volume": 50,
+        "output_muted": False,
+        "input_muted": False
+    },
+    "power": {
+        "profile": "balanced",
+        "screen_timeout": 300
+    },
+    "notifications": {
+        "dnd": False,
+        "position": "top-right"
     }
 }
 

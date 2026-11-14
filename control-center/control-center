@@ -32,9 +32,16 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GtkLayerShell, GLib, Pango, GdkPixbuf
 
-_SHARED_ROOT = os.path.expanduser("~/Projects/neon-desktop")
-if _SHARED_ROOT not in sys.path:
-    sys.path.insert(0, _SHARED_ROOT)
+_POSSIBLE_SHARED = [
+    os.path.expanduser("~/Projects/arch-desktop"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
+    os.path.expanduser("~/.config/neon-desktop"),
+    os.path.expanduser("~/Projects/neon-desktop"),
+]
+for p in _POSSIBLE_SHARED:
+    if os.path.isdir(os.path.join(p, "shared")) and p not in sys.path:
+        sys.path.insert(0, p)
+        break
 from shared import theme
 
 PID_FILE = f"/tmp/control-center-{os.getuid()}.pid"

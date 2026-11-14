@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Settings
+GenericName=System Settings
+Comment=System and Desktop Control Center for Arch Linux & Hyprland
+Exec=settings
+Icon=settings
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;GTK;
+StartupWMClass=settings
+Keywords=settings;preferences;wallpaper;display;audio;dock;appearance;system;hardware;

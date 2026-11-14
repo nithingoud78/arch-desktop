@@ -40,7 +40,16 @@ from datetime import datetime
 from pathlib import Path
 
 # Add shared module path
-sys.path.insert(0, os.path.expanduser("~/Projects/neon-desktop"))
+POSSIBLE_SHARED = [
+    os.path.expanduser("~/Projects/arch-desktop"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
+    os.path.expanduser("~/.config/neon-desktop"),
+    os.path.expanduser("~/Projects/neon-desktop"),
+]
+for p in POSSIBLE_SHARED:
+    if os.path.isdir(os.path.join(p, "shared")) and p not in sys.path:
+        sys.path.insert(0, p)
+        break
 from shared import theme, config, system, icons
 
 # ── Display Metrics ──────────────────────────────────────────────────────
@@ -395,12 +404,194 @@ def extract_dock_theme(wallpaper_path, fallback_palette=None):
     return result
 
 # ── Dynamic CSS ──────────────────────────────────────────────────────────
-def build_dock_css(palette, dock_theme=None):
+def build_dock_css(palette, dock_theme=None, transparency=90, glow_strength=100, floating=True, radius=None, theme_mode="Dark"):
     dt = dock_theme or extract_dock_theme(palette.get('wallpaper'), palette)
-    ws_c = theme.derive_topbar_colors(dt)
+    if theme_mode not in ("Light", "Dark"):
+        theme_mode = "Dark"
+    is_light = (theme_mode == "Light")
+    ws_c = theme.derive_topbar_colors(dt, theme_mode=theme_mode)
     br, bg, bb = dt.get('base_rgb', (13, 10, 26))
     s0, s1, s2, s3, s4 = dt.get('stops', ["#ff8a00", "#ec4899", "#d946ef", "#9333ea", "#7c3aed"])
     s2_light = _lighten_hex(s2, 0.74)
+
+    translucent = True
+    try:
+        from shared import config
+        translucent = config.load_settings().get("translucent_panels", True)
+    except Exception:
+        pass
+
+    try:
+        t_val = float(transparency)
+    except Exception:
+        t_val = 90.0
+
+    # Reversed as requested: 0% strength = solid (0% transparency), 100% strength = clear (full transparency)
+    if translucent:
+        inv_t = (100.0 - t_val) / 100.0
+        inner_alpha = max(0.12, min(0.98, inv_t * 0.86 + 0.12))
+    else:
+        inner_alpha = 0.98
+
+    try:
+        g_val = float(glow_strength)
+    except Exception:
+        g_val = 100.0
+    glow_scale = max(0.0, min(1.0, g_val / 100.0))
+
+    if radius is not None:
+        rad_val = max(0.0, min(16.0, float(radius)))
+    else:
+        rad_val = 16.0 if floating else 0.0
+
+    ratio = rad_val / 16.0
+    border_rad_css = f"border-radius: {rad_val:.1f}px;"
+    inner_rad = max(0.0, rad_val - 1.8) if rad_val > 1.8 else 0.0
+    inner_rad_css = f"border-radius: {inner_rad:.1f}px;"
+
+    pad_side = 1.8 * ratio
+    pad_bot = 1.8 * ratio
+    pad_top = 1.8 if (ratio > 0.05 or glow_scale > 0.01) else 0.0
+    border_padding_css = f"padding: {pad_top:.1f}px {pad_side:.1f}px {pad_bot:.1f}px {pad_side:.1f}px;"
+
+    if glow_scale > 0.01:
+        border_bg_css = f"""background: linear-gradient(90deg, 
+        {hex_to_rgba(s0, glow_scale)} 0%, 
+        {hex_to_rgba(s1, glow_scale)} 25%, 
+        {hex_to_rgba(s2, glow_scale)} 50%, 
+        {hex_to_rgba(s3, glow_scale)} 75%, 
+        {hex_to_rgba(s4, glow_scale)} 100%
+    );"""
+    else:
+        border_bg_css = "background: transparent;"
+
+    if glow_scale > 0.01 and ratio > 0.05:
+        g_alpha = glow_scale * ratio
+        radial_glows = f"""
+        radial-gradient(ellipse at 1.2% 50%, {hex_to_rgba(s0, 0.82 * g_alpha)} 0%, {hex_to_rgba(s0, 0.40 * g_alpha)} 4.5%, transparent 10.0%),
+        radial-gradient(ellipse at 98.8% 50%, {hex_to_rgba(s4, 0.78 * g_alpha)} 0%, {hex_to_rgba(s4, 0.38 * g_alpha)} 4.5%, transparent 10.0%),"""
+    else:
+        radial_glows = ""
+
+    alpha_scale = inner_alpha / 0.82
+
+    if is_light:
+        dock_inner_bg_color = f"rgba(246, 248, 252, {inner_alpha})"
+        dock_inner_gradient = f"""linear-gradient(180deg,
+            rgba(255, 255, 255, {min(1.0, 0.75 * alpha_scale)}) 0%,
+            rgba(244, 247, 254, {min(1.0, 0.40 * alpha_scale)}) 50%,
+            rgba(232, 238, 250, {min(1.0, 0.65 * alpha_scale)}) 100%
+        ),{radial_glows}
+        linear-gradient(90deg,
+            {hex_to_rgba(s0, 0.70 * glow_scale)} 0%,
+            {hex_to_rgba(s1, 0.65 * glow_scale)} 25%,
+            {hex_to_rgba(s2, 0.60 * glow_scale)} 50%,
+            {hex_to_rgba(s3, 0.65 * glow_scale)} 75%,
+            {hex_to_rgba(s4, 0.70 * glow_scale)} 100%
+        );"""
+        if glow_scale > 0.01:
+            inner_shadow_css = f"""box-shadow: 
+        inset 0 1.5px 3px rgba(255, 255, 255, {0.90 * glow_scale * ratio:.2f}), 
+        inset 0 -1.5px 3px rgba(0, 0, 0, {0.08 * glow_scale * ratio:.2f});"""
+        else:
+            inner_shadow_css = "box-shadow: none;"
+        launcher_bg_css = "linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(240, 244, 252, 0.75) 44%, rgba(225, 234, 248, 0.85) 100%);"
+        launcher_border_css = "1px solid rgba(0, 0, 0, 0.12);"
+        launcher_shadow_css = "inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(0, 0, 0, 0.06);"
+        launcher_hover_bg_css = "linear-gradient(180deg, rgba(255, 255, 255, 1.0) 0%, rgba(245, 248, 255, 0.85) 44%, rgba(230, 238, 252, 0.90) 100%);"
+        launcher_hover_border_css = "1px solid rgba(0, 0, 0, 0.18);"
+        sep_color = "rgba(0, 0, 0, 0.10)"
+        lbl_nav_color = "#334155"
+        lbl_heading_color = "#0f172a"
+        ws_bg_css = "rgba(0, 0, 0, 0.05)"
+        ws_border_css = "1px solid rgba(0, 0, 0, 0.10)"
+        ws_inactive_color = "#64748b"
+        player_bg_css = "rgba(0, 0, 0, 0.04)"
+        player_border_css = "1px solid rgba(0, 0, 0, 0.08)"
+        player_ctrl_color = "#475569"
+        player_ctrl_hover_bg = "rgba(0, 0, 0, 0.08)"
+        player_ctrl_hover_color = "#0f172a"
+        stat_name_color = "#475569"
+        stat_val_color = "#0f172a"
+        trough_bg = "rgba(0, 0, 0, 0.08)"
+        date_tile_css = f"""
+    background: {hex_to_rgba(s3, 0.14)};
+    background-image: linear-gradient(180deg, {hex_to_rgba(s2, 0.20)} 0%, {hex_to_rgba(s3, 0.10)} 100%);
+    border: 1px solid {hex_to_rgba(s2, 0.40)};
+    border-radius: 8px;
+    padding: 2px 5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.80);
+    color: {s3};"""
+        lbl_date_color = "#475569"
+        lbl_time_color = "#0f172a"
+        lbl_tray_color = "#334155"
+        notes_inner_bg = "rgba(248, 250, 255, 0.95)"
+        notes_text_bg = "rgba(0, 0, 0, 0.03)"
+        notes_text_border = "rgba(0, 0, 0, 0.08)"
+        notes_text_color = "#0f172a"
+    else:
+        dock_inner_bg_color = f"rgba({br}, {bg}, {bb}, {inner_alpha})"
+        dock_inner_gradient = f"""linear-gradient(180deg,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.04 * alpha_scale)}) 0%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.36 * alpha_scale)}) 14%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.62 * alpha_scale)}) 32%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.70 * alpha_scale)}) 50%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.62 * alpha_scale)}) 68%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.32 * alpha_scale)}) 86%,
+            rgba({br}, {bg}, {bb}, {min(1.0, 0.04 * alpha_scale)}) 100%
+        ),{radial_glows}
+        linear-gradient(90deg,
+            {hex_to_rgba(s0, 0.84 * glow_scale)} 0%,
+            {hex_to_rgba(s1, 0.74 * glow_scale)} 25%,
+            {hex_to_rgba(s2, 0.70 * glow_scale)} 50%,
+            {hex_to_rgba(s3, 0.74 * glow_scale)} 75%,
+            {hex_to_rgba(s4, 0.82 * glow_scale)} 100%
+        );"""
+        if glow_scale > 0.01:
+            if ratio > 0.05:
+                inner_shadow_css = f"""box-shadow: 
+        inset 0 1.5px 4px rgba(255, 255, 255, {0.24 * glow_scale * ratio:.2f}), 
+        inset 0 -2px 5px {hex_to_rgba(s2, 0.28 * glow_scale * ratio)};"""
+            else:
+                inner_shadow_css = f"""box-shadow: 
+        inset 0 1.5px 2px rgba(255, 255, 255, {0.18 * glow_scale:.2f}), 
+        inset 0 2px 4px {hex_to_rgba(s2, 0.25 * glow_scale)};"""
+        else:
+            inner_shadow_css = "box-shadow: none;"
+        launcher_bg_css = "linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(10, 9, 22, 0.18) 44%, rgba(4, 4, 12, 0.32) 100%);"
+        launcher_border_css = "1px solid rgba(255, 255, 255, 0.22);"
+        launcher_shadow_css = "inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -1px 1px rgba(0, 0, 0, 0.22);"
+        launcher_hover_bg_css = "linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(12, 10, 26, 0.24) 44%, rgba(6, 5, 16, 0.36) 100%);"
+        launcher_hover_border_css = "1px solid rgba(255, 255, 255, 0.34);"
+        sep_color = "rgba(255, 255, 255, 0.12)"
+        lbl_nav_color = "#F5EBFB"
+        lbl_heading_color = "#FDFBFE"
+        ws_bg_css = ws_c['ws_bg']
+        ws_border_css = f"1px solid {ws_c['ws_border']}"
+        ws_inactive_color = ws_c['ws_inactive']
+        player_bg_css = "rgba(255, 255, 255, 0.04)"
+        player_border_css = "1px solid rgba(255, 255, 255, 0.09)"
+        player_ctrl_color = "#cbd5e1"
+        player_ctrl_hover_bg = "rgba(255, 255, 255, 0.10)"
+        player_ctrl_hover_color = "#ffffff"
+        stat_name_color = "#F5EBFB"
+        stat_val_color = "#FDFBFE"
+        trough_bg = "rgba(255, 255, 255, 0.08)"
+        date_tile_css = f"""
+    background: {hex_to_rgba(s3, 0.28)};
+    background-image: linear-gradient(180deg, {hex_to_rgba(s2, 0.34)} 0%, {hex_to_rgba(s3, 0.18)} 100%);
+    border: 1px solid {hex_to_rgba(s2_light, 0.58)};
+    border-radius: 8px;
+    padding: 2px 5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: #FDFBFE;"""
+        lbl_date_color = "#F5EBFB"
+        lbl_time_color = "#FDFBFE"
+        lbl_tray_color = "#F5EBFB"
+        notes_inner_bg = "rgba(15, 12, 28, 0.95)"
+        notes_text_bg = "rgba(255, 255, 255, 0.04)"
+        notes_text_border = "rgba(255, 255, 255, 0.08)"
+        notes_text_color = "#ffffff"
 
     return f"""
 * {{
@@ -464,66 +655,39 @@ window.background,
 /* INVARIANT: The dock exterior must always remain genuinely transparent.
    Only the rounded capsule may render a visible surface. Never leak glow outside the dock border. */
 #dock-border {{
-    background: linear-gradient(90deg, 
-        {s0} 0%, 
-        {s1} 25%, 
-        {s2} 50%, 
-        {s3} 75%, 
-        {s4} 100%
-    );
-    border-radius: 16px;
-    padding: 1.8px;
+    {border_bg_css}
+    {border_rad_css}
+    {border_padding_css}
     box-shadow: none;
 }}
 
-/* ── 1. Inner Dark Translucent Glass (Internal glow behind all elements) */
+/* ── 1. Inner Translucent Glass (Internal glow behind all elements) */
 #dock-inner {{
-    background-color: rgba({br}, {bg}, {bb}, 0.90);
-    background-image:
-        linear-gradient(180deg,
-            rgba({br}, {bg}, {bb}, 0.04) 0%,
-            rgba({br}, {bg}, {bb}, 0.36) 14%,
-            rgba({br}, {bg}, {bb}, 0.62) 32%,
-            rgba({br}, {bg}, {bb}, 0.70) 50%,
-            rgba({br}, {bg}, {bb}, 0.62) 68%,
-            rgba({br}, {bg}, {bb}, 0.32) 86%,
-            rgba({br}, {bg}, {bb}, 0.04) 100%
-        ),
-        radial-gradient(ellipse at 1.2% 50%, {hex_to_rgba(s0, 0.82)} 0%, {hex_to_rgba(s0, 0.40)} 4.5%, transparent 10.0%),
-        radial-gradient(ellipse at 98.8% 50%, {hex_to_rgba(s4, 0.78)} 0%, {hex_to_rgba(s4, 0.38)} 4.5%, transparent 10.0%),
-        linear-gradient(90deg,
-            {hex_to_rgba(s0, 0.84)} 0%,
-            {hex_to_rgba(s1, 0.74)} 25%,
-            {hex_to_rgba(s2, 0.70)} 50%,
-            {hex_to_rgba(s3, 0.74)} 75%,
-            {hex_to_rgba(s4, 0.82)} 100%
-        );
-    border-radius: 14.2px;
+    background-color: {dock_inner_bg_color};
+    background-image: {dock_inner_gradient}
+    {inner_rad_css}
     padding: 0 14px;
-    box-shadow: 
-        inset 0 1.5px 4px rgba(255, 255, 255, 0.24), 
-        inset 0 -2px 5px {hex_to_rgba(s2, 0.28)};
+    {inner_shadow_css}
+    transition: background-color 220ms ease, box-shadow 220ms ease;
 }}
 
-/* ── 4. Launcher Grid Button: 3x3 Dots Inside Compact Dark Glass Box ─── */
+/* ── 4. Launcher Grid Button: 3x3 Dots Inside Compact Glass Box ─── */
 #dock-inner button#launcher-btn,
 #launcher-btn,
 button#launcher-btn {{
     background: transparent;
     background-color: transparent;
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(10, 9, 22, 0.18) 44%, rgba(4, 4, 12, 0.32) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.22);
+    background-image: {launcher_bg_css}
+    border: {launcher_border_css}
     outline: none;
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.24),
-        inset 0 -1px 1px rgba(0, 0, 0, 0.22);
+    box-shadow: {launcher_shadow_css}
     padding: 0;
     margin: 0;
     min-width: 30px;
     min-height: 30px;
     border-radius: 10px;
     opacity: 1.0;
-    transition: background-image 150ms ease, border-color 150ms ease;
+    transition: background-image 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }}
 #dock-inner button#launcher-btn image,
 #launcher-btn image,
@@ -535,11 +699,9 @@ button#launcher-btn {{
 button#launcher-btn:hover {{
     background: transparent;
     background-color: transparent;
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(12, 10, 26, 0.24) 44%, rgba(6, 5, 16, 0.36) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.34);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.30),
-        inset 0 -1px 1px rgba(0, 0, 0, 0.24);
+    background-image: {launcher_hover_bg_css}
+    border: {launcher_hover_border_css}
+    box-shadow: {launcher_shadow_css}
 }}
 #dock-inner button#launcher-btn:focus,
 #dock-inner button#launcher-btn:active,
@@ -549,10 +711,10 @@ button#launcher-btn:focus,
 button#launcher-btn:active {{
     background: transparent;
     background-color: transparent;
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(10, 9, 22, 0.22) 44%, rgba(4, 4, 12, 0.34) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.26);
+    background-image: {launcher_bg_css}
+    border: {launcher_border_css}
     outline: none;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20), inset 0 -1px 1px rgba(0, 0, 0, 0.24);
+    box-shadow: {launcher_shadow_css}
 }}
 
 /* ── 5. Pinned Apps & Dynamic Running Apps ────────────────────────────── */
@@ -609,7 +771,7 @@ button.dock-app-btn:active {{
 
 /* ── Separators ────────────────────────────────────────────────────────── */
 .dock-sep {{
-    background: rgba(255, 255, 255, 0.12);
+    background: {sep_color};
     min-width: 1px;
     margin: 8px 0;
 }}
@@ -658,27 +820,30 @@ button.dock-nav-btn:active {{
 .lbl-nav,
 .dock-nav-btn:hover .lbl-nav,
 .dock-nav-btn:backdrop .lbl-nav {{
-    color: #F5EBFB;
+    color: {lbl_nav_color};
     font-size: 8.5px;
     font-weight: 600;
     opacity: 1.0;
+    transition: color 180ms ease;
 }}
 
 .lbl-heading {{
-    color: #FDFBFE;
+    color: {lbl_heading_color};
     font-size: 11.5px;
     font-weight: 600;
+    transition: color 180ms ease;
 }}
 
 /* ── 3. Workspace Switcher: Topbar-Matched Capsule & Sliding Pill ─────── */
 #ws-segmented-box {{
-    background: {ws_c['ws_bg']};
+    background: {ws_bg_css};
     background-image: none;
-    border: 1px solid {ws_c['ws_border']};
+    border: {ws_border_css};
     border-radius: 14px;
     box-shadow: none;
     min-width: 200px;
     min-height: 26px;
+    transition: background-color 180ms ease, border-color 180ms ease;
 }}
 
 #ws-segmented-overlay,
@@ -735,7 +900,7 @@ button.ws-segment-btn:backdrop {{
 .ws-segment-btn:hover .lbl-ws-btn,
 .ws-segment-btn:backdrop .lbl-ws-btn,
 .lbl-ws-btn {{
-    color: {ws_c['ws_inactive']};
+    color: {ws_inactive_color};
     font-size: 12px;
     font-weight: 600;
     opacity: 1.0;
@@ -750,10 +915,11 @@ button.ws-segment-btn:backdrop {{
 
 /* ── 6. Media Player Card ────────────────────────────────────────────── */
 #player-card {{
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: {player_bg_css};
+    border: {player_border_css};
     border-radius: 11px;
     padding: 3px 8px;
+    transition: background-color 180ms ease, border-color 180ms ease;
 }}
 #player-art-box {{
     background: transparent;
@@ -770,12 +936,12 @@ button.ws-segment-btn:backdrop {{
     border-radius: 10px;
     padding: 0;
     margin: 0;
-    color: #cbd5e1;
-    transition: background 120ms ease;
+    color: {player_ctrl_color};
+    transition: background 120ms ease, color 120ms ease;
 }}
 .player-ctrl-btn:hover {{
-    background: rgba(255, 255, 255, 0.10);
-    color: #ffffff;
+    background: {player_ctrl_hover_bg};
+    color: {player_ctrl_hover_color};
 }}
 #play-pause-btn {{
     background: linear-gradient(135deg, {s2}, {s1});
@@ -821,7 +987,7 @@ button.ws-segment-btn:backdrop {{
     background: transparent;
 }}
 .sys-progress trough {{
-    background: rgba(255, 255, 255, 0.08);
+    background: {trough_bg};
     border-radius: 3px;
     min-height: 4px;
     border: none;
@@ -833,32 +999,29 @@ button.ws-segment-btn:backdrop {{
     border: none;
 }}
 .stat-name {{
-    color: #F5EBFB;
+    color: {stat_name_color};
     font-size: 9px;
     font-weight: 600;
     min-width: 24px;
     opacity: 1.0;
+    transition: color 180ms ease;
 }}
 .stat-val {{
-    color: #FDFBFE;
+    color: {stat_val_color};
     font-size: 9.5px;
     font-weight: 500;
     min-width: 28px;
     font-family: "Adwaita Sans", "Symbols Nerd Font", "Font Awesome 7 Free", "Font Awesome 7 Free Solid", sans-serif;
     opacity: 1.0;
+    transition: color 180ms ease;
 }}
 
 /* ── 8. Date Tile & Typography ───────────────────────────────────────── */
 #dock-inner label#date-tile,
 #dock-inner #date-tile,
 #date-tile {{
-    background: {hex_to_rgba(s3, 0.28)};
-    background-image: linear-gradient(180deg, {hex_to_rgba(s2, 0.34)} 0%, {hex_to_rgba(s3, 0.18)} 100%);
-    border: 1px solid {hex_to_rgba(s2_light, 0.58)};
-    border-radius: 8px;
-    padding: 2px 5px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
-    color: #FDFBFE;
+    {date_tile_css}
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
     font-size: 12.5px;
     font-weight: 600;
     font-family: "Adwaita Sans", "Symbols Nerd Font", "Font Awesome 7 Free", "Font Awesome 7 Free Solid", sans-serif;
@@ -866,15 +1029,17 @@ button.ws-segment-btn:backdrop {{
     min-height: 22px;
 }}
 .lbl-date-str {{
-    color: #F5EBFB;
+    color: {lbl_date_color};
     font-size: 9.5px;
     font-weight: 500;
     opacity: 1.0;
+    transition: color 180ms ease;
 }}
 .lbl-time-str {{
-    color: #FDFBFE;
+    color: {lbl_time_color};
     font-size: 12px;
     font-weight: 600;
+    transition: color 180ms ease;
 }}
 
 /* ── 9 & 10. System Tray ─────────────────────────────────────────────── */
@@ -959,10 +1124,11 @@ button.ws-segment-btn:backdrop {{
     opacity: 1.0;
 }}
 .lbl-tray {{
-    color: #F5EBFB;
+    color: {lbl_tray_color};
     font-size: 11px;
     font-weight: 500;
     font-family: "Adwaita Sans", "Symbols Nerd Font", "Font Awesome 7 Free", "Font Awesome 7 Free Solid", sans-serif;
+    transition: color 180ms ease;
 }}
 
 /* ── Notes popup ─────────────────────────────────────────────────────── */
@@ -976,15 +1142,15 @@ button.ws-segment-btn:backdrop {{
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.60);
 }}
 #notes-inner {{
-    background: rgba(15, 12, 28, 0.95);
+    background: {notes_inner_bg};
     border-radius: 15px;
     padding: 12px;
 }}
 .notes-text {{
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: {notes_text_bg};
+    border: {notes_text_border};
     border-radius: 10px;
-    color: #ffffff;
+    color: {notes_text_color};
     padding: 8px;
     font-size: 12px;
 }}
@@ -1031,7 +1197,7 @@ class FixedWidthButton(Gtk.Button):
 class LiquidNavRevealer:
     """VSync-synchronized liquid width + opacity collapse/expand container."""
 
-    DURATION_US = 400000
+    DURATION_US = 240000
 
     def __init__(
         self,
@@ -1043,6 +1209,7 @@ class LiquidNavRevealer:
         flex_min_width=None,
         on_shown=None,
         on_hidden=None,
+        on_progress=None,
     ):
         self._target_w = max(1, int(target_width))
         self._height = int(height)
@@ -1050,6 +1217,7 @@ class LiquidNavRevealer:
         self._flex_min_w = flex_min_width
         self._on_shown = on_shown
         self._on_hidden = on_hidden
+        self._on_progress = on_progress
 
         self._revealed = bool(start_revealed)
         self._cur_frac = 1.0 if self._revealed else 0.0
@@ -1092,9 +1260,20 @@ class LiquidNavRevealer:
     def is_revealed(self):
         return self._revealed
 
-    def set_callbacks(self, on_shown=None, on_hidden=None):
+    def update_sizes(self, target_w, flex_min_w=None):
+        self._target_w = max(1, int(target_w))
+        if flex_min_w is not None:
+            self._flex_min_w = int(flex_min_w)
+        self.widget.set_size(self._target_w, self._height)
+        if self._revealed and not self._anim_running:
+            w = self._flex_min_w if self._flex_min_w is not None else self._target_w
+            self.widget.set_size_request(w, self._height)
+
+    def set_callbacks(self, on_shown=None, on_hidden=None, on_progress=None):
         self._on_shown = on_shown
         self._on_hidden = on_hidden
+        if on_progress is not None:
+            self._on_progress = on_progress
 
     def begin_collapse(self):
         alloc_w = self.widget.get_allocation().width
@@ -1119,8 +1298,34 @@ class LiquidNavRevealer:
         self.widget.set_size_request(cur_w, self._height)
         self.widget.move(self.child, slide_x, 0)
 
-    def set_reveal(self, reveal):
+    def set_reveal(self, reveal, animated=True):
         reveal = bool(reveal)
+        if not animated:
+            if self._tick_id is not None:
+                self.widget.remove_tick_callback(self._tick_id)
+                self._tick_id = None
+            self._anim_running = False
+            self._revealed = reveal
+            self._cur_frac = 1.0 if reveal else 0.0
+            self._start_frac = self._cur_frac
+            self._target_frac = self._cur_frac
+            self._apply_frame(self._cur_frac)
+            if reveal:
+                if self._flex_min_w is not None:
+                    self.widget.set_halign(Gtk.Align.FILL)
+                    self.widget.set_hexpand(True)
+                    self.widget.set_size_request(self._flex_min_w, self._height)
+                self.widget.set_no_show_all(False)
+                self.widget.set_visible(True)
+                if self._on_shown:
+                    self._on_shown(self)
+            else:
+                self.widget.set_no_show_all(True)
+                self.widget.set_visible(False)
+                if self._on_hidden:
+                    self._on_hidden(self)
+            return
+
         if reveal == self._revealed and (
             (not self._anim_running and self._cur_frac == (1.0 if reveal else 0.0))
             or self._anim_running
@@ -1147,10 +1352,12 @@ class LiquidNavRevealer:
                     self.widget.set_halign(Gtk.Align.FILL)
                     self.widget.set_hexpand(True)
                     self.widget.set_size_request(self._flex_min_w, self._height)
+                self.widget.set_no_show_all(False)
                 self.widget.set_visible(True)
                 if self._on_shown:
                     self._on_shown(self)
             else:
+                self.widget.set_no_show_all(True)
                 self.widget.set_visible(False)
                 if self._on_hidden:
                     self._on_hidden(self)
@@ -1179,12 +1386,18 @@ class LiquidNavRevealer:
         e = p * p * p * (p * (p * 6.0 - 15.0) + 10.0)
         frac = self._start_frac + (self._target_frac - self._start_frac) * e
         self._apply_frame(frac)
+        if hasattr(self, "_on_progress") and self._on_progress:
+            try:
+                self._on_progress(self, frac)
+            except Exception:
+                pass
 
         if p >= 1.0:
             self._apply_frame(self._target_frac)
             self._anim_running = False
             self._tick_id = None
             if self._target_frac <= 0.0:
+                self.widget.set_no_show_all(True)
                 self.widget.set_visible(False)
                 if self._on_hidden:
                     self._on_hidden(self)
@@ -1195,6 +1408,11 @@ class LiquidNavRevealer:
                     self.widget.set_size_request(self._flex_min_w, self._height)
                 if self._on_shown:
                     self._on_shown(self)
+            if hasattr(self, "_on_progress") and self._on_progress:
+                try:
+                    self._on_progress(self, self._target_frac)
+                except Exception:
+                    pass
             return False
         return True
 
@@ -1435,7 +1653,7 @@ class ApplicationsModule:
     PINNED_APPS = [
         {"id": "org.kde.dolphin", "name": "Files", "icon": "org.kde.dolphin", "match": ["dolphin", "org.kde.dolphin"]},
         {"id": "brave-browser", "name": "Brave", "icon": "brave-desktop", "match": ["brave-browser", "brave"]},
-        {"id": "kitty", "name": "Terminal", "icon": "/usr/share/icons/hicolor/256x256/apps/kitty.png", "match": ["kitty"]},
+        {"id": "kitty", "name": "Terminal", "icon": "/home/nithin/.local/share/icons/kitty.png", "match": ["kitty"]},
         {"id": "antigravity-ide", "name": "Antigravity", "icon": "/home/nithin/.local/share/icons/antigravity-ide.png", "match": ["antigravity-ide", "antigravity"]},
         {"id": "vlc", "name": "VLC", "icon": "vlc", "match": ["vlc"]}
     ]
@@ -1445,8 +1663,10 @@ class ApplicationsModule:
         "xdg-desktop-portal-gtk", "polkit-kde-authentication-agent-1"
     }
 
-    def __init__(self, on_capacity_changed=None):
+    def __init__(self, on_capacity_changed=None, icon_size=APP_ICON_SIZE):
         self.on_capacity_changed = on_capacity_changed
+        self.icon_size = max(20, min(36, int(icon_size)))
+        self.current_effective_size = self.icon_size
         self.widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.widget.set_hexpand(True)
         self.widget.set_valign(Gtk.Align.CENTER)
@@ -1463,15 +1683,15 @@ class ApplicationsModule:
         btn_grid.set_size_request(30, 30)
         btn_grid.set_valign(Gtk.Align.CENTER)
         btn_grid.set_halign(Gtk.Align.CENTER)
-        grid_icon = icons.get_image("grid", 16, "#ffffff")
-        grid_icon.set_halign(Gtk.Align.CENTER)
-        grid_icon.set_valign(Gtk.Align.CENTER)
-        grid_icon.get_style_context().add_class("app-icon")
-        btn_grid.add(grid_icon)
+        self.grid_icon = icons.get_image("grid", 16, "#ffffff")
+        self.grid_icon.set_halign(Gtk.Align.CENTER)
+        self.grid_icon.set_valign(Gtk.Align.CENTER)
+        self.grid_icon.get_style_context().add_class("app-icon")
+        btn_grid.add(self.grid_icon)
         btn_grid.set_tooltip_text("Applications")
         btn_grid.connect(
             "clicked",
-            lambda *_: _spawn_detached(["nwg-drawer", "-wm", "uwsm", "-term", "kitty", "-fm", "dolphin"]),
+            lambda *_: _spawn_detached(["neon-drawer"]),
         )
         grid_cell.pack_start(btn_grid, False, False, 0)
         self.widget.pack_start(grid_cell, False, False, 0)
@@ -1488,26 +1708,98 @@ class ApplicationsModule:
 
         self._app_items = []
         self._dynamic_items = {}
+        self._pinned_mtime = self._get_pinned_mtime()
         self._load_apps()
 
+    def update_theme_mode(self, mode):
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "grid_icon") and self.grid_icon:
+            icons.set_image_icon(self.grid_icon, "grid", 16, col)
+
+    def get_total_apps_count(self):
+        active_dyn = sum(1 for info in self._dynamic_items.values() if not info.get("closing"))
+        return len(self._app_items) + active_dyn
+
+    def calculate_required_width(self, size, n_apps):
+        if n_apps <= 0:
+            return 0
+        sz = max(20, min(36, int(size)))
+        cell_w = max(24, sz)
+        spacing = max(0, int((sz - 20) * 0.4))
+        return n_apps * cell_w + max(0, n_apps - 1) * spacing
+
+    def calculate_fitting_icon_size(self, req_size, n_apps, avail_w):
+        req_size = max(20, min(36, int(req_size)))
+        if n_apps <= 0:
+            return req_size, 0
+        best_size = 20
+        for s in range(req_size, 19, -1):
+            if self.calculate_required_width(s, n_apps) <= avail_w:
+                best_size = s
+                break
+        best_spacing = max(0, int((best_size - 20) * 0.4))
+        return best_size, best_spacing
+
+    def apply_effective_sizing(self, eff_size, eff_spacing):
+        if (
+            getattr(self, "current_effective_size", None) == eff_size
+            and self.apps_box.get_spacing() == eff_spacing
+        ):
+            return
+        self.current_effective_size = eff_size
+        self.apps_box.set_spacing(eff_spacing)
+        cell_w = max(24, eff_size)
+
+        for item in self._app_items:
+            cell = item.get("cell")
+            btn = item.get("btn")
+            if cell:
+                cell.set_size_request(cell_w, 48)
+            if btn:
+                btn.set_size_request(cell_w, 48)
+                img = btn.get_child()
+                if isinstance(img, Gtk.Image):
+                    img.set_pixel_size(eff_size)
+
+        for info in self._dynamic_items.values():
+            cell = info.get("cell")
+            btn = info.get("btn")
+            slot = info.get("slot")
+            if cell:
+                cell.set_size_request(cell_w, 48)
+            if btn:
+                btn.set_size_request(cell_w, 48)
+                img = btn.get_child()
+                if isinstance(img, Gtk.Image):
+                    img.set_pixel_size(eff_size)
+            if slot and hasattr(slot, "update_sizes"):
+                slot.update_sizes(target_w=cell_w, flex_min_w=cell_w)
+
+    def set_icon_size(self, size):
+        self.icon_size = max(20, min(36, int(size)))
+        if self.on_capacity_changed:
+            self.on_capacity_changed()
+
     def _create_app_cell(self, name, icon_name, app_id, is_dynamic=False):
+        sz = getattr(self, "current_effective_size", getattr(self, "icon_size", APP_ICON_SIZE))
+        cell_w = max(24, sz)
         cell = Gtk.Overlay()
-        cell.set_size_request(24, 48)
+        cell.set_size_request(cell_w, 48)
         cell.set_valign(Gtk.Align.CENTER)
         cell.set_halign(Gtk.Align.CENTER)
 
         btn = Gtk.Button()
         btn.get_style_context().add_class("dock-app-btn")
-        btn.set_size_request(24, 48)
+        btn.set_size_request(cell_w, 48)
         btn.set_valign(Gtk.Align.CENTER)
         btn.set_halign(Gtk.Align.CENTER)
 
-        gicon = get_app_gicon(icon_name, APP_ICON_SIZE)
+        gicon = get_app_gicon(icon_name, sz)
         if gicon:
             img = Gtk.Image.new_from_gicon(gicon, Gtk.IconSize.BUTTON)
-            img.set_pixel_size(APP_ICON_SIZE)
+            img.set_pixel_size(sz)
         else:
-            img = icons.get_image("grid", APP_ICON_SIZE, "#ffffff")
+            img = icons.get_image("grid", sz, "#ffffff")
 
         img.set_halign(Gtk.Align.CENTER)
         img.set_valign(Gtk.Align.CENTER)
@@ -1541,13 +1833,61 @@ class ApplicationsModule:
     def _focus_or_launch_dynamic(self, btn, app_class):
         system.run_cmd(f"hyprctl dispatch focuswindow class:'(?i){app_class}' 2>/dev/null || gtk-launch '{app_class}' 2>/dev/null")
 
-    def _load_apps(self):
-        for item in self.PINNED_APPS:
+    PINNED_FILE = os.path.expanduser("~/.config/neon-desktop/pinned.json")
+
+    def _get_pinned_list(self):
+        if os.path.isfile(self.PINNED_FILE):
+            try:
+                with open(self.PINNED_FILE, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+            except Exception:
+                pass
+        return self.PINNED_APPS
+
+    def _get_pinned_mtime(self):
+        try:
+            return os.path.getmtime(self.PINNED_FILE) if os.path.isfile(self.PINNED_FILE) else 0
+        except Exception:
+            return 0
+
+    def reload_pinned(self):
+        for item in self._app_items:
+            cell = item.get("cell")
+            if cell and cell.get_parent() is self.apps_box:
+                self.apps_box.remove(cell)
+            if cell:
+                cell.destroy()
+        self._app_items.clear()
+        self._pinned_mtime = self._get_pinned_mtime()
+        pinned_list = self._get_pinned_list()
+        for idx, item in enumerate(pinned_list):
             app_id = item.get("id", "")
             icon_name = item.get("icon", "")
             name = item.get("name", app_id)
+            match = item.get("match", [app_id.lower()])
             cell, btn, dot = self._create_app_cell(name, icon_name, app_id, is_dynamic=False)
-            self._app_items.append({"id": app_id, "name": name, "match": item["match"], "cell": cell, "btn": btn, "dot": dot})
+            self._app_items.append({"id": app_id, "name": name, "match": match, "cell": cell, "btn": btn, "dot": dot})
+            self.apps_box.pack_start(cell, True, True, 0)
+            self.apps_box.reorder_child(cell, idx)
+        self.apps_box.show_all()
+        if self.on_capacity_changed:
+            self.on_capacity_changed()
+
+    def check_pinned_update(self):
+        cur_mtime = self._get_pinned_mtime()
+        if cur_mtime != self._pinned_mtime:
+            self.reload_pinned()
+
+    def _load_apps(self):
+        for item in self._get_pinned_list():
+            app_id = item.get("id", "")
+            icon_name = item.get("icon", "")
+            name = item.get("name", app_id)
+            match = item.get("match", [app_id.lower()])
+            cell, btn, dot = self._create_app_cell(name, icon_name, app_id, is_dynamic=False)
+            self._app_items.append({"id": app_id, "name": name, "match": match, "cell": cell, "btn": btn, "dot": dot})
             self.apps_box.pack_start(cell, True, True, 0)
 
     def _launch_app(self, btn, app_id):
@@ -1685,10 +2025,10 @@ class NotesModule:
         vbox.set_hexpand(False)
         vbox.set_vexpand(False)
 
-        icon = icons.get_image("notes", 13, "#ffffff")
-        icon.set_halign(Gtk.Align.CENTER)
-        icon.set_valign(Gtk.Align.CENTER)
-        vbox.pack_start(icon, False, False, 0)
+        self.icon = icons.get_image("notes", 13, "#ffffff")
+        self.icon.set_halign(Gtk.Align.CENTER)
+        self.icon.set_valign(Gtk.Align.CENTER)
+        vbox.pack_start(self.icon, False, False, 0)
 
         lbl = Gtk.Label(label="Notes")
         lbl.get_style_context().add_class("lbl-nav")
@@ -1702,6 +2042,11 @@ class NotesModule:
             "clicked",
             lambda *_: _spawn_detached(["sh", "-c", "pgrep -x copyq >/dev/null || (copyq & sleep 0.3); copyq show"]),
         )
+
+    def update_theme_mode(self, mode):
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "icon") and self.icon:
+            icons.set_image_icon(self.icon, "notes", 13, col)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1724,10 +2069,10 @@ class SearchModule:
         vbox.set_hexpand(False)
         vbox.set_vexpand(False)
 
-        icon = icons.get_image("search", 13, "#ffffff")
-        icon.set_halign(Gtk.Align.CENTER)
-        icon.set_valign(Gtk.Align.CENTER)
-        vbox.pack_start(icon, False, False, 0)
+        self.icon = icons.get_image("search", 13, "#ffffff")
+        self.icon.set_halign(Gtk.Align.CENTER)
+        self.icon.set_valign(Gtk.Align.CENTER)
+        vbox.pack_start(self.icon, False, False, 0)
 
         lbl = Gtk.Label(label="Search")
         lbl.get_style_context().add_class("lbl-nav")
@@ -1737,7 +2082,12 @@ class SearchModule:
         vbox.pack_start(lbl, False, False, 0)
 
         self.widget.add(vbox)
-        self.widget.connect("clicked", lambda *_: _spawn_detached(["wofi", "--show", "drun"]))
+        self.widget.connect("clicked", lambda *_: _spawn_detached(["neon-drun"]))
+
+    def update_theme_mode(self, mode):
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "icon") and self.icon:
+            icons.set_image_icon(self.icon, "search", 13, col)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1760,10 +2110,10 @@ class SnapModule:
         vbox.set_hexpand(False)
         vbox.set_vexpand(False)
 
-        icon = icons.get_image("aperture", 13, "#ffffff")
-        icon.set_halign(Gtk.Align.CENTER)
-        icon.set_valign(Gtk.Align.CENTER)
-        vbox.pack_start(icon, False, False, 0)
+        self.icon = icons.get_image("aperture", 13, "#ffffff")
+        self.icon.set_halign(Gtk.Align.CENTER)
+        self.icon.set_valign(Gtk.Align.CENTER)
+        vbox.pack_start(self.icon, False, False, 0)
 
         lbl = Gtk.Label(label="Snap")
         lbl.get_style_context().add_class("lbl-nav")
@@ -1774,6 +2124,11 @@ class SnapModule:
 
         self.widget.add(vbox)
         self.widget.connect("clicked", self._take_screenshot)
+
+    def update_theme_mode(self, mode):
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "icon") and self.icon:
+            icons.set_image_icon(self.icon, "aperture", 13, col)
 
     def _take_screenshot(self, *args):
         cmd = """
@@ -2158,7 +2513,8 @@ class PlayerModule:
         btn_prev = Gtk.Button()
         btn_prev.get_style_context().add_class("player-ctrl-btn")
         btn_prev.set_size_request(20, 20)
-        btn_prev.add(icons.get_image("prev", 11, "#ffffff"))
+        self.prev_img = icons.get_image("prev", 11, "#ffffff")
+        btn_prev.add(self.prev_img)
         btn_prev.connect("clicked", self._on_prev)
         ctrls.pack_start(btn_prev, False, False, 0)
 
@@ -2173,7 +2529,8 @@ class PlayerModule:
         btn_next = Gtk.Button()
         btn_next.get_style_context().add_class("player-ctrl-btn")
         btn_next.set_size_request(20, 20)
-        btn_next.add(icons.get_image("next", 11, "#ffffff"))
+        self.next_img = icons.get_image("next", 11, "#ffffff")
+        btn_next.add(self.next_img)
         btn_next.connect("clicked", self._on_next)
         ctrls.pack_start(btn_next, False, False, 0)
 
@@ -2184,6 +2541,14 @@ class PlayerModule:
 
         self._update()
         GLib.timeout_add(1500, self._update)
+
+    def update_theme_mode(self, mode):
+        self.theme_mode = mode
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "prev_img") and self.prev_img:
+            icons.set_image_icon(self.prev_img, "prev", 11, col)
+        if hasattr(self, "next_img") and self.next_img:
+            icons.set_image_icon(self.next_img, "next", 11, col)
 
     def _on_prev(self, *args):
         p_arg = f"-p {self._active_player}" if self._active_player else ""
@@ -2285,20 +2650,36 @@ class PlayerModule:
 # ══════════════════════════════════════════════════════════════════════════
 class SettingsModule:
     def __init__(self):
-        self.widget = FixedWidthButton(77)
+        self.widget = FixedWidthButton(82)
         self.widget.set_name("settings-btn")
         self.widget.set_valign(Gtk.Align.CENTER)
-        self.widget.set_size_request(77, 32)
+        self.widget.set_size_request(82, 32)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        box.pack_start(icons.get_image("settings", 15, "#ffffff"), False, False, 0)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        settings_png = os.path.expanduser("~/.local/share/icons/settings.png")
+        if os.path.isfile(settings_png):
+            try:
+                gicon = Gio.FileIcon.new(Gio.File.new_for_path(settings_png))
+                s_img = Gtk.Image.new_from_gicon(gicon, Gtk.IconSize.BUTTON)
+                s_img.set_pixel_size(18)
+            except Exception:
+                s_img = icons.get_image("settings", 16, "#ffffff")
+        else:
+            s_img = icons.get_image("settings", 16, "#ffffff")
+        self.s_img = s_img
+        box.pack_start(s_img, False, False, 0)
 
         lbl = Gtk.Label(label="Settings")
         lbl.get_style_context().add_class("lbl-heading")
         box.pack_start(lbl, False, False, 0)
 
         self.widget.add(box)
-        self.widget.connect("clicked", lambda *_: system.run_cmd("control-center settings 2>/dev/null || ~/.local/bin/control-center settings 2>/dev/null &"))
+        self.widget.connect("clicked", lambda *_: subprocess.Popen(["/home/nithin/.local/bin/settings"], start_new_session=True))
+
+    def update_theme_mode(self, mode):
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "s_img") and self.s_img and not os.path.isfile(os.path.expanduser("~/.local/share/icons/settings.png")):
+            icons.set_image_icon(self.s_img, "settings", 16, col)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -2436,6 +2817,7 @@ class SystemTrayModule:
     CC_PID_FILE = f"/tmp/control-center-{os.getuid()}.pid"
 
     def __init__(self):
+        self.theme_mode = "Dark"
         self.widget = FixedWidthBox(160, orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.widget.set_valign(Gtk.Align.CENTER)
         self.widget.set_size_request(160, 28)
@@ -2568,6 +2950,16 @@ class SystemTrayModule:
         threading.Thread(target=_fetch, daemon=True).start()
         return True
 
+    def update_theme_mode(self, mode):
+        self.theme_mode = mode
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "notif_icon") and self.notif_icon:
+            icons.set_image_icon(self.notif_icon, "notification-panel", 16, col)
+        if hasattr(self, "vol_img") and self.vol_img:
+            icons.set_image_icon(self.vol_img, "volume-high", 16, col)
+        if hasattr(self, "wifi_img") and self.wifi_img:
+            icons.set_image_icon(self.wifi_img, "wifi", 16, col)
+
     def _apply_sys(self, bat_info, vol, mute, wifi):
         pct = bat_info.get("capacity", 100)
         is_charging = bat_info.get("is_charging", False)
@@ -2577,14 +2969,15 @@ class SystemTrayModule:
 
         icons.set_battery_icon(self.bat_img, pct, is_charging=is_charging, is_plugged=is_plugged, size=19)
 
+        base_col = "#1e293b" if getattr(self, "theme_mode", "Dark") == "Light" else "#ffffff"
         if mute or vol == 0:
-            icons.set_image_icon(self.vol_img, "volume-muted", 16, "#ffffff")
+            icons.set_image_icon(self.vol_img, "volume-muted", 16, base_col)
         elif vol > 50:
-            icons.set_image_icon(self.vol_img, "volume-high", 16, "#ffffff")
+            icons.set_image_icon(self.vol_img, "volume-high", 16, base_col)
         else:
-            icons.set_image_icon(self.vol_img, "volume-low", 16, "#ffffff")
+            icons.set_image_icon(self.vol_img, "volume-low", 16, base_col)
 
-        w_color = "#38bdf8" if wifi.get("connected") else "#ffffff"
+        w_color = "#38bdf8" if wifi.get("connected") else base_col
         icons.set_image_icon(self.wifi_img, "wifi", 16, w_color)
         self._sync_cc_state()
 
@@ -2616,6 +3009,26 @@ class NeonDockApp(Gtk.Window):
             gtk_settings.set_property("gtk-xft-rgba", "none")
 
         # Layer Shell: Full width with 16px side margins; bottom rests at 5px via border_box margin
+        full_cfg = config.load_settings()
+        dock_cfg = full_cfg.get("dock", {})
+        self.theme_mode = dock_cfg.get("theme_mode", full_cfg.get("theme_mode", "Dark"))
+        if self.theme_mode not in ("Light", "Dark"):
+            self.theme_mode = "Dark"
+        self.dock_transparency = dock_cfg.get("transparency", 90)
+        self.dock_neon_glow = dock_cfg.get("neon_glow_strength", 100)
+        self.autohide = dock_cfg.get("autohide", True)
+        self.floating = dock_cfg.get("floating", True)
+        self.current_radius = 16.0 if self.floating else 0.0
+        self._float_anim_id = None
+        self.icon_size = dock_cfg.get("icon_size", 26)
+        default_secs = ["apps", "search", "snap", "notes", "modes", "player", "settings", "sysmon", "date", "systray"]
+        self.enabled_sections = list(dock_cfg.get("enabled_sections", default_secs))
+        if "date" not in self.enabled_sections:
+            self.enabled_sections.append("date")
+        self.section_order = list(dock_cfg.get("section_order", default_secs))
+        if "date" not in self.section_order:
+            self.section_order.append("date")
+
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.TOP)
         GtkLayerShell.set_namespace(self, "neon-dock")
@@ -2623,9 +3036,11 @@ class NeonDockApp(Gtk.Window):
         GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
         GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, True)
         GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, 0)
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, 16)
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, 16)
+        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, 16 if self.floating else 0)
+        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, 16 if self.floating else 0)
         GtkLayerShell.set_exclusive_zone(self, 0)
+
+        self._start_ipc_server()
 
         # Autohide state
         self._hypr_sock = _find_hypr_socket()
@@ -2657,6 +3072,7 @@ class NeonDockApp(Gtk.Window):
         self._build_ui()
         if hasattr(self, "sysmon_mod"):
             self.sysmon_mod.apply_theme(self.dock_theme["stops"][2])
+        self.update_dock_capacity(animated=False)
 
         # Edge trigger strip along entire bottom edge
         self._edge_trigger = self._build_edge_trigger()
@@ -2665,13 +3081,28 @@ class NeonDockApp(Gtk.Window):
         self._check_running_apps()
         GLib.timeout_add(1000, self._check_running_apps)
         GLib.timeout_add(1500, self._check_theme_update)
+        GLib.timeout_add(100, self._poll_edge_trigger)
 
         self.connect("destroy", Gtk.main_quit)
-
-        # Warm realize once offscreen, then hide immediately unless cursor is already at bottom edge
         self._edge_trigger.show_all()
-        if self._is_cursor_in_dock_zone():
+        self.show_all()
+        self.update_dock_capacity(animated=False)
+        if not getattr(self, "autohide", True):
             self._show_dock()
+        elif self._is_cursor_in_dock_zone():
+            self._show_dock()
+        else:
+            self._hide_dock()
+
+    def _poll_edge_trigger(self):
+        if not getattr(self, "autohide", True):
+            if not self._dock_target_open:
+                self._show_dock()
+            return True
+        if not self._dock_target_open:
+            if self._is_cursor_in_dock_zone():
+                self._show_dock()
+        return True
 
     def _build_edge_trigger(self):
         trig = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -2696,7 +3127,7 @@ class NeonDockApp(Gtk.Window):
 
         ev_box = Gtk.EventBox()
         ev_box.set_name("neon-dock-edge-box")
-        ev_box.set_size_request(-1, 2)
+        ev_box.set_size_request(-1, 3)
         ev_box.set_hexpand(True)
         ev_box.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
         ev_box.connect("enter-notify-event", self._on_edge_enter)
@@ -2762,10 +3193,14 @@ class NeonDockApp(Gtk.Window):
         if event.detail == Gdk.NotifyType.INFERIOR:
             return False
         self._pointer_inside = False
+        if not getattr(self, "autohide", True):
+            return False
         self._schedule_hide_check()
         return False
 
     def _poll_cursor_keep_open(self):
+        if not getattr(self, "autohide", True):
+            return True
         if not self._dock_target_open and not self._dock_revealer.get_child_revealed():
             self._hover_poll_id = None
             return False
@@ -2778,10 +3213,14 @@ class NeonDockApp(Gtk.Window):
         return True
 
     def _schedule_hide_check(self):
+        if not getattr(self, "autohide", True):
+            return
         if self._hide_delay_id is not None or not self._dock_target_open:
             return
         def _after_grace():
             self._hide_delay_id = None
+            if not getattr(self, "autohide", True):
+                return False
             if not self._is_cursor_in_dock_zone():
                 self._hide_dock()
             return False
@@ -2842,8 +3281,190 @@ class NeonDockApp(Gtk.Window):
         except Exception:
             return 0.0
 
-    def _apply_css(self):
-        css_data = build_dock_css(self.palette, self.dock_theme)
+    def _start_ipc_server(self):
+        sock_path = f"/run/user/{os.getuid()}/neon-dock.sock"
+        try:
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
+        except Exception:
+            pass
+
+        try:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(sock_path)
+            server.listen(5)
+        except Exception:
+            return
+
+        def _listen():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                    with conn:
+                        data = b""
+                        while b"\n" not in data:
+                            chunk = conn.recv(1024)
+                            if not chunk:
+                                break
+                            data += chunk
+                        if data:
+                            msg = json.loads(data.decode().strip())
+                            GLib.idle_add(self._handle_ipc_message, msg)
+                except Exception:
+                    time.sleep(0.05)
+
+        threading.Thread(target=_listen, daemon=True).start()
+
+    def _handle_ipc_message(self, msg):
+        cmd = msg.get("cmd")
+        if cmd == "set_theme_mode":
+            self.set_theme_mode(msg.get("val", "Dark"))
+        elif cmd == "set_transparency":
+            self.dock_transparency = int(msg.get("val", 90))
+            self._apply_css()
+        elif cmd == "set_glow":
+            self.dock_neon_glow = int(msg.get("val", 100))
+            self._apply_css()
+        elif cmd == "set_autohide":
+            self.set_autohide(msg.get("val", True))
+        elif cmd == "set_floating":
+            self.set_floating(msg.get("val", True))
+        elif cmd == "set_icon_size":
+            self.set_icon_size(msg.get("val", 26))
+        elif cmd == "set_sections":
+            self.update_sections(msg.get("enabled"), msg.get("order"))
+        return False
+
+    def set_theme_mode(self, mode):
+        if mode not in ("Light", "Dark"):
+            mode = "Dark"
+        self.theme_mode = mode
+        self._apply_css()
+        self._update_icon_colors()
+        self.queue_draw()
+
+    def _update_icon_colors(self):
+        mode = getattr(self, "theme_mode", "Dark")
+        col = "#1e293b" if mode == "Light" else "#ffffff"
+        if hasattr(self, "apps_mod"):
+            self.apps_mod.update_theme_mode(mode)
+        if hasattr(self, "notes_mod"):
+            self.notes_mod.update_theme_mode(mode)
+        if hasattr(self, "search_mod"):
+            self.search_mod.update_theme_mode(mode)
+        if hasattr(self, "snap_mod"):
+            self.snap_mod.update_theme_mode(mode)
+        if hasattr(self, "player_mod"):
+            self.player_mod.update_theme_mode(mode)
+        if hasattr(self, "settings_mod"):
+            self.settings_mod.update_theme_mode(mode)
+        if hasattr(self, "tray_mod"):
+            self.tray_mod.update_theme_mode(mode)
+        if hasattr(self, "arch_btn"):
+            child = self.arch_btn.get_child()
+            if child:
+                icons.set_image_icon(child, "arch", 17, col)
+
+    def set_autohide(self, enabled):
+        self.autohide = bool(enabled)
+        if not self.autohide:
+            self._cancel_hide_delay()
+            self._show_dock()
+        else:
+            if not self._is_cursor_in_dock_zone():
+                self._schedule_hide_check()
+
+    def set_floating(self, enabled):
+        self.floating = bool(enabled)
+        self.update_dock_capacity()
+        target_side = 16 if self.floating else 0
+        target_bot = 5 if self.floating else 0
+        target_radius = 16.0 if self.floating else 0.0
+
+        cur_side = GtkLayerShell.get_margin(self, GtkLayerShell.Edge.LEFT)
+        cur_bot = getattr(self, "border_box", None)
+        cur_b_val = cur_bot.get_margin_bottom() if cur_bot else (5 if not self.floating else 0)
+        cur_radius = getattr(self, "current_radius", 16.0 if not self.floating else 0.0)
+
+        if hasattr(self, "_float_anim_id") and self._float_anim_id:
+            GLib.source_remove(self._float_anim_id)
+            self._float_anim_id = None
+
+        steps = 14
+        step_idx = [0]
+        def _step():
+            step_idx[0] += 1
+            progress = min(1.0, step_idx[0] / steps)
+            ease = 1.0 - (1.0 - progress) ** 3
+            s = int(round(cur_side + (target_side - cur_side) * ease))
+            b = int(round(cur_b_val + (target_bot - cur_b_val) * ease))
+            r = cur_radius + (target_radius - cur_radius) * ease
+            self.current_radius = r
+
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, s)
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, s)
+            if hasattr(self, "border_box"):
+                self.border_box.set_margin_bottom(b)
+            self._apply_css(radius=r)
+            self.queue_resize()
+
+            if progress >= 1.0:
+                self.current_radius = target_radius
+                self._apply_css(radius=target_radius)
+                self._float_anim_id = None
+                return False
+            return True
+
+        self._float_anim_id = GLib.timeout_add(16, _step)
+
+    def set_icon_size(self, size):
+        self.icon_size = max(20, min(36, int(size)))
+        if hasattr(self, "apps_mod"):
+            self.apps_mod.icon_size = self.icon_size
+        self.update_dock_capacity()
+
+    def update_sections(self, enabled_list=None, order_list=None):
+        if enabled_list is not None:
+            self.enabled_sections = list(enabled_list)
+        if order_list is not None:
+            self.section_order = list(order_list)
+
+        enabled = set(self.enabled_sections)
+        for sid, box in getattr(self, "section_containers", {}).items():
+            is_vis = sid in enabled or (sid == "workspaces" and "modes" in enabled) or (sid == "modes" and "workspaces" in enabled)
+            box.set_visible(is_vis)
+
+        if hasattr(self, "search_mod") and hasattr(self, "snap_revealer") and hasattr(self, "notes_revealer"):
+            nav_vis = ("search" in enabled) or ("snap" in enabled) or ("notes" in enabled)
+            box_nav = getattr(self, "section_boxes", {}).get("search")
+            if box_nav:
+                box_nav.set_visible(nav_vis)
+
+        if hasattr(self, "inner_box"):
+            pos = 0
+            seen = set()
+            for sid in self.section_order:
+                actual_sid = "workspaces" if sid == "modes" else sid
+                if actual_sid in getattr(self, "section_boxes", {}):
+                    box = self.section_boxes[actual_sid]
+                    if box not in seen:
+                        self.inner_box.reorder_child(box, pos)
+                        pos += 1
+                        seen.add(box)
+            if hasattr(self, "arch_btn"):
+                self.inner_box.reorder_child(self.arch_btn, -1)
+
+    def _apply_css(self, radius=None):
+        rad = radius if radius is not None else getattr(self, "current_radius", None)
+        css_data = build_dock_css(
+            self.palette,
+            self.dock_theme,
+            transparency=getattr(self, "dock_transparency", 90),
+            glow_strength=getattr(self, "dock_neon_glow", 100),
+            floating=getattr(self, "floating", True),
+            radius=rad,
+            theme_mode=getattr(self, "theme_mode", "Dark")
+        )
         self.css_provider.load_from_data(css_data.encode())
         if not getattr(self, "_css_provider_added", False):
             Gtk.StyleContext.add_provider_for_screen(
@@ -2872,13 +3493,6 @@ class NeonDockApp(Gtk.Window):
                 or cur_pal.get("accent_primary") != self.palette.get("accent_primary")
             )
             if changed:
-                # Re-extract shared palette too when wallpaper itself changed so theme.json stays in sync
-                if active_wp and os.path.isfile(active_wp) and (active_wp != self._active_wallpaper or wp_mtime != self._wp_mtime):
-                    try:
-                        cur_pal = theme.update_theme(active_wp)
-                        pal_mtime = self._safe_mtime(theme.PALETTE_FILE)
-                    except Exception:
-                        pass
                 new_dock_theme = extract_dock_theme(active_wp, cur_pal)
                 GLib.idle_add(self._apply_theme_state, cur_pal, active_wp, wp_mtime, pal_mtime, new_dock_theme)
 
@@ -2904,35 +3518,111 @@ class NeonDockApp(Gtk.Window):
             GLib.source_remove(stagger_id)
             self._nav_stagger_id = None
 
-    def _on_apps_capacity_changed(self, total_apps):
-        # Dynamic space reclamation:
-        # 1. Notes disappears first (liquid width + opacity collapse)
-        # 2. If more space is required, Snap disappears second (staggered cascade)
-        # When applications close: Restore Snap first, then Notes afterwards.
-        # Search must NEVER disappear.
+    def _get_screen_width(self):
+        try:
+            screen = self.get_screen()
+            display = screen.get_display() if screen else Gdk.Display.get_default()
+            if display:
+                monitor = display.get_primary_monitor() or display.get_monitor(0)
+                if monitor:
+                    return monitor.get_geometry().width
+            if screen:
+                return screen.get_width()
+        except Exception:
+            pass
+        return 1600
+
+    def _on_nav_revealer_progress(self, revealer, frac):
+        if not hasattr(self, "apps_mod") or not hasattr(self, "inner_box"):
+            return
+        n_apps = self.apps_mod.get_total_apps_count()
+        req_size = getattr(self, "icon_size", 26)
+        screen_w = self._get_screen_width()
+        margin = 16 if getattr(self, "floating", True) else 0
+        max_dock_w = screen_w - (margin * 2)
+        dock_frame_padding = 30
+        apps_chrome = 66
+
+        box_apps = getattr(self, "box_apps", None) or self.section_boxes.get("apps")
+        current_other = 0
+        for child in self.inner_box.get_children():
+            if child is not box_apps and child.get_visible():
+                current_other += child.get_preferred_width()[0]
+
+        avail_now = max(10, max_dock_w - dock_frame_padding - current_other - apps_chrome)
+        eff_size, eff_spacing = self.apps_mod.calculate_fitting_icon_size(req_size, n_apps, avail_now)
+        self.apps_mod.apply_effective_sizing(eff_size, eff_spacing)
+
+    def update_dock_capacity(self, total_apps=None, animated=True):
+        if not hasattr(self, "apps_mod") or not hasattr(self, "inner_box"):
+            return
+
+        n_apps = total_apps if total_apps is not None else self.apps_mod.get_total_apps_count()
+        req_size = getattr(self, "icon_size", 26)
+
+        screen_w = self._get_screen_width()
+        margin = 16 if getattr(self, "floating", True) else 0
+        max_dock_w = screen_w - (margin * 2)
+
+        dock_frame_padding = 30
+        apps_chrome = 66
+
+        box_apps = getattr(self, "box_apps", None) or self.section_boxes.get("apps")
+        box_nav = getattr(self, "section_boxes", {}).get("search")
+
+        # Stable base width of all other non-collapsible modules
+        base_other = 0
+        for child in self.inner_box.get_children():
+            if child is not box_apps and child is not box_nav and child.get_visible():
+                base_other += child.get_preferred_width()[0]
+        if hasattr(self, "search_mod") and self.search_mod.widget.get_visible():
+            base_other += self.search_mod.widget.get_preferred_width()[0] + 17
+
+        # Available space under each target state
+        avail_both = max(10, max_dock_w - dock_frame_padding - (base_other + 126) - apps_chrome)
+        avail_snap = max(10, max_dock_w - dock_frame_padding - (base_other + 63) - apps_chrome)
+        avail_none = max(10, max_dock_w - dock_frame_padding - base_other - apps_chrome)
+
+        req_w = self.apps_mod.calculate_required_width(req_size, n_apps)
+
         self._cancel_nav_stagger()
-        if total_apps >= 9:
-            self.notes_revealer.set_reveal(False)
-            if self.snap_revealer.is_revealed():
-                def _hide_snap():
-                    self._nav_stagger_id = None
-                    self.snap_revealer.set_reveal(False)
-                    return False
-                self._nav_stagger_id = GLib.timeout_add(140, _hide_snap)
-        elif total_apps == 8:
-            self.notes_revealer.set_reveal(False)
-            self.snap_revealer.set_reveal(True)
-        else:  # total_apps <= 7
+        if req_w <= avail_both:
             was_both_hidden = (not self.snap_revealer.is_revealed() and not self.notes_revealer.is_revealed())
-            self.snap_revealer.set_reveal(True)
-            if was_both_hidden:
+            self.snap_revealer.set_reveal(True, animated=animated)
+            if was_both_hidden and animated:
                 def _show_notes():
                     self._nav_stagger_id = None
-                    self.notes_revealer.set_reveal(True)
+                    self.notes_revealer.set_reveal(True, animated=True)
                     return False
-                self._nav_stagger_id = GLib.timeout_add(140, _show_notes)
+                self._nav_stagger_id = GLib.timeout_add(100, _show_notes)
             else:
-                self.notes_revealer.set_reveal(True)
+                self.notes_revealer.set_reveal(True, animated=animated)
+        elif req_w <= avail_snap:
+            self.notes_revealer.set_reveal(False, animated=animated)
+            self.snap_revealer.set_reveal(True, animated=animated)
+        else:
+            self.notes_revealer.set_reveal(False, animated=animated)
+            if self.snap_revealer.is_revealed() and animated:
+                def _hide_snap():
+                    self._nav_stagger_id = None
+                    self.snap_revealer.set_reveal(False, animated=True)
+                    return False
+                self._nav_stagger_id = GLib.timeout_add(100, _hide_snap)
+            else:
+                self.snap_revealer.set_reveal(False, animated=animated)
+
+        # Apply safe effective sizing based on what ACTUALLY fits right now
+        current_other = 0
+        for child in self.inner_box.get_children():
+            if child is not box_apps and child.get_visible():
+                current_other += child.get_preferred_width()[0]
+
+        avail_now = max(10, max_dock_w - dock_frame_padding - current_other - apps_chrome)
+        eff_size, eff_spacing = self.apps_mod.calculate_fitting_icon_size(req_size, n_apps, avail_now)
+        self.apps_mod.apply_effective_sizing(eff_size, eff_spacing)
+
+    def _on_apps_capacity_changed(self, total_apps=None):
+        self.update_dock_capacity(total_apps)
 
     def _build_ui(self):
         # Outer transparent wrapper
@@ -2942,17 +3632,24 @@ class NeonDockApp(Gtk.Window):
         border_box = Gtk.Box()
         border_box.set_name("dock-border")
         border_box.set_hexpand(True)
+        self.border_box = border_box
 
         inner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         inner_box.set_name("dock-inner")
-        inner_box.set_size_request(1536, DOCK_HEIGHT - 6)
+        inner_box.set_size_request(-1, DOCK_HEIGHT - 6)
         inner_box.set_hexpand(True)
+        self.inner_box = inner_box
 
         # ── EXACT ORDER OF 9 GROUPS MATCHING SPECIFICATION ──────────────
         # 1. Applications launcher, pinned apps, and dynamic running apps
-        self.apps_mod = ApplicationsModule(on_capacity_changed=self._on_apps_capacity_changed)
-        inner_box.pack_start(self.apps_mod.widget, True, True, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
+        box_apps = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_apps.set_valign(Gtk.Align.CENTER)
+        box_apps.set_hexpand(True)
+        self.box_apps = box_apps
+        self.apps_mod = ApplicationsModule(on_capacity_changed=self._on_apps_capacity_changed, icon_size=self.icon_size)
+        box_apps.pack_start(self.apps_mod.widget, True, True, 0)
+        box_apps.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
+        inner_box.pack_start(box_apps, True, True, 0)
 
         # 2. Navigation Group: Search -> Snap -> Notes (with progressive visibility & separators)
         self.search_mod = SearchModule()
@@ -2963,56 +3660,85 @@ class NeonDockApp(Gtk.Window):
         snap_box.set_valign(Gtk.Align.CENTER)
         snap_box.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
         snap_box.pack_start(self.snap_mod.widget, False, False, 0)
-        self.snap_revealer = LiquidNavRevealer(snap_box, target_width=63, height=48)
+        self.snap_revealer = LiquidNavRevealer(
+            snap_box,
+            target_width=63,
+            height=48,
+            duration_us=240000,
+            on_progress=self._on_nav_revealer_progress,
+        )
 
         notes_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         notes_box.set_valign(Gtk.Align.CENTER)
         notes_box.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
         notes_box.pack_start(self.notes_mod.widget, False, False, 0)
-        self.notes_revealer = LiquidNavRevealer(notes_box, target_width=63, height=48)
+        self.notes_revealer = LiquidNavRevealer(
+            notes_box,
+            target_width=63,
+            height=48,
+            duration_us=240000,
+            on_progress=self._on_nav_revealer_progress,
+        )
 
-        self.nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        self.nav_box.set_valign(Gtk.Align.CENTER)
-        self.nav_box.set_halign(Gtk.Align.CENTER)
-        self.nav_box.set_hexpand(False)
-        self.nav_box.pack_start(self.search_mod.widget, False, False, 0)
-        self.nav_box.pack_start(self.snap_revealer.widget, False, False, 0)
-        self.nav_box.pack_start(self.notes_revealer.widget, False, False, 0)
-
-        inner_box.pack_start(self.nav_box, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
+        box_nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_nav.set_valign(Gtk.Align.CENTER)
+        box_nav.set_halign(Gtk.Align.CENTER)
+        box_nav.set_hexpand(False)
+        box_nav.pack_start(self.search_mod.widget, False, False, 0)
+        box_nav.pack_start(self.snap_revealer.widget, False, False, 0)
+        box_nav.pack_start(self.notes_revealer.widget, False, False, 0)
+        box_nav.pack_start(make_sep_box(hexpand=False, margin=8), False, False, 0)
+        inner_box.pack_start(box_nav, False, False, 0)
 
         # 3. Workspace Switcher (Topbar-Matched Segmented Container)
+        box_ws = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_ws.set_valign(Gtk.Align.CENTER)
         self.ws_mod = WorkspaceSwitcherModule()
-        inner_box.pack_start(self.ws_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_ws.pack_start(self.ws_mod.widget, False, False, 0)
+        box_ws.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_ws, False, False, 0)
 
         # 4. Media player
+        box_player = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_player.set_valign(Gtk.Align.CENTER)
         self.player_mod = PlayerModule()
-        inner_box.pack_start(self.player_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_player.pack_start(self.player_mod.widget, False, False, 0)
+        box_player.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_player, False, False, 0)
 
         # 5. Settings launcher
+        box_settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_settings.set_valign(Gtk.Align.CENTER)
         self.settings_mod = SettingsModule()
-        inner_box.pack_start(self.settings_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_settings.pack_start(self.settings_mod.widget, False, False, 0)
+        box_settings.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_settings, False, False, 0)
 
         # 6. System Monitor
+        box_sysmon = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_sysmon.set_valign(Gtk.Align.CENTER)
         self.sysmon_mod = SystemMonitorModule()
-        inner_box.pack_start(self.sysmon_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_sysmon.pack_start(self.sysmon_mod.widget, False, False, 0)
+        box_sysmon.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_sysmon, False, False, 0)
 
-        # 6. Date tile and live clock
+        # 7. Date tile and live clock
+        box_date = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_date.set_valign(Gtk.Align.CENTER)
         self.date_mod = DateModule()
-        inner_box.pack_start(self.date_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_date.pack_start(self.date_mod.widget, False, False, 0)
+        box_date.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_date, False, False, 0)
 
-        # 7. System Tray
+        # 8. System Tray
+        box_tray = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box_tray.set_valign(Gtk.Align.CENTER)
         self.tray_mod = SystemTrayModule()
-        inner_box.pack_start(self.tray_mod.widget, False, False, 0)
-        inner_box.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        box_tray.pack_start(self.tray_mod.widget, False, False, 0)
+        box_tray.pack_start(make_sep_box(hexpand=False, margin=6), False, False, 0)
+        inner_box.pack_start(box_tray, False, False, 0)
 
-        # 8. Show Desktop Arch Button (Far Right Corner)
+        # 9. Show Desktop Arch Button (Far Right Corner)
         arch_btn = FixedWidthButton(24)
         arch_btn.set_name("arch-desktop-btn")
         arch_btn.set_size_request(24, 24)
@@ -3029,10 +3755,38 @@ class NeonDockApp(Gtk.Window):
             lambda *_: _spawn_detached([os.path.expanduser("~/.local/bin/toggle-desktop")]),
         )
         inner_box.pack_start(arch_btn, False, False, 0)
+        self.arch_btn = arch_btn
+
+        self.section_containers = {
+            "apps": box_apps,
+            "search": self.search_mod.widget,
+            "snap": self.snap_revealer.widget,
+            "notes": self.notes_revealer.widget,
+            "workspaces": box_ws,
+            "modes": box_ws,
+            "player": box_player,
+            "settings": box_settings,
+            "sysmon": box_sysmon,
+            "date": box_date,
+            "systray": box_tray,
+        }
+        self.section_boxes = {
+            "apps": box_apps,
+            "search": box_nav,
+            "snap": box_nav,
+            "notes": box_nav,
+            "workspaces": box_ws,
+            "modes": box_ws,
+            "player": box_player,
+            "settings": box_settings,
+            "sysmon": box_sysmon,
+            "date": box_date,
+            "systray": box_tray,
+        }
 
         # 1. inner_box expands 100% inside border_box with ZERO exposed border gradient
         border_box.pack_start(inner_box, True, True, 0)
-        border_box.set_margin_bottom(5)
+        border_box.set_margin_bottom(5 if self.floating else 0)
         self._dock_revealer = Gtk.Revealer()
         self._dock_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
         self._dock_revealer.set_transition_duration(220)
@@ -3044,8 +3798,12 @@ class NeonDockApp(Gtk.Window):
         self.outer_box.pack_start(self._dock_revealer, True, True, 0)
         self.add(self.outer_box)
         self.outer_box.show_all()
+        self.update_sections(self.enabled_sections, self.section_order)
+        self._update_icon_colors()
 
     def _check_running_apps(self):
+        if hasattr(self, "apps_mod"):
+            self.apps_mod.check_pinned_update()
         def _fetch():
             out = system.run_cmd("hyprctl clients -j 2>/dev/null")
             try:
