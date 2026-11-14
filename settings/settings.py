@@ -62,14 +62,19 @@ def backup_config(file_path):
 
 class SmoothScroller:
     """Frame-clock synchronized buttery smooth kinetic scroller for high-refresh displays."""
-    def __init__(self, scrolled_window, step=85.0, decay=24.0):
+    def __init__(self, scrolled_window, step=140.0, decay=20.0):
         self.sw = scrolled_window
         self.step = step
         self.decay = decay
         self.vadj = scrolled_window.get_vadjustment()
         self.target = None
         self.tick_id = None
-        self.last_time = 0.0
+        self.last_frame_time_us = 0
+        self.last_tick_time = 0.0
+        self.last_scroll_time = 0.0
+        self.last_direction = 0
+        self.momentum = 1.0
+        self._current_decay = decay
         self._in_tick = False
 
         self.sw.add_events(Gdk.EventMask.SCROLL_MASK)
@@ -78,6 +83,9 @@ class SmoothScroller:
 
     def reset(self):
         self.target = None
+        self.last_frame_time_us = 0
+        self.last_tick_time = 0.0
+        self.momentum = 1.0
         if self.tick_id:
             try:
                 self.sw.remove_tick_callback(self.tick_id)
@@ -95,6 +103,13 @@ class SmoothScroller:
             return False
 
         delta = 0.0
+        is_touchpad = False
+
+        dev = event.get_source_device() if hasattr(event, "get_source_device") else None
+        if dev is not None and hasattr(dev, "get_source"):
+            if dev.get_source() == Gdk.InputSource.TOUCHPAD:
+                is_touchpad = True
+
         if event.direction == Gdk.ScrollDirection.UP:
             delta = -self.step
         elif event.direction == Gdk.ScrollDirection.DOWN:
@@ -107,7 +122,12 @@ class SmoothScroller:
                 dx, dy = ret
             if abs(dy) < 0.001:
                 return False
-            delta = dy * self.step
+
+            if is_touchpad or abs(dy) < 0.65:
+                delta = dy * 36.0
+                is_touchpad = True
+            else:
+                delta = (1.0 if dy > 0 else -1.0) * self.step * abs(dy)
         else:
             return False
 
@@ -118,22 +138,49 @@ class SmoothScroller:
         upper = max(lower, self.vadj.get_upper() - self.vadj.get_page_size())
         curr = self.vadj.get_value()
 
-        if self.target is None or abs(self.target - curr) > 500:
+        # Dynamic momentum accumulation for successive scrolls
+        now = time.monotonic()
+        direction = 1 if delta > 0 else -1
+        time_since_last = now - self.last_scroll_time
+
+        if not is_touchpad:
+            if time_since_last < 0.22 and direction == self.last_direction:
+                self.momentum = min(2.8, self.momentum + 0.35)
+            else:
+                self.momentum = 1.0
+            delta *= self.momentum
+        else:
+            self.momentum = 1.0
+
+        self.last_scroll_time = now
+        self.last_direction = direction
+        self._current_decay = 32.0 if is_touchpad else self.decay
+
+        if self.target is None or abs(self.target - curr) > 1200:
             self.target = curr
 
-        max_lead = 450.0
+        # Generous lead so fast scrolling never hits an artificial wall
+        max_lead = 2400.0
         new_target = self.target + delta
         new_target = max(curr - max_lead, min(curr + max_lead, new_target))
         new_target = max(lower, min(upper, new_target))
 
+        # Boundary check
         if (curr <= lower + 0.5 and delta < 0) or (curr >= upper - 0.5 and delta > 0):
-            self.target = curr
+            self.target = None
+            if self.tick_id:
+                try:
+                    self.sw.remove_tick_callback(self.tick_id)
+                except Exception:
+                    pass
+                self.tick_id = None
             return True
 
         self.target = new_target
-        self.last_time = time.monotonic()
 
         if not self.tick_id:
+            self.last_frame_time_us = 0
+            self.last_tick_time = time.monotonic()
             self.tick_id = self.sw.add_tick_callback(self._on_tick)
 
         return True
@@ -143,14 +190,26 @@ class SmoothScroller:
             self.tick_id = None
             return False
 
-        now = time.monotonic()
-        dt = max(0.001, min(0.05, now - self.last_time))
-        self.last_time = now
+        if frame_clock is not None and hasattr(frame_clock, "get_frame_time"):
+            frame_time_us = frame_clock.get_frame_time()
+            if self.last_frame_time_us > 0:
+                dt = (frame_time_us - self.last_frame_time_us) / 1000000.0
+                dt = max(0.001, min(0.05, dt))
+            else:
+                dt = 0.006  # ~165Hz default
+            self.last_frame_time_us = frame_time_us
+        else:
+            now = time.monotonic()
+            if self.last_tick_time > 0.0:
+                dt = max(0.001, min(0.05, now - self.last_tick_time))
+            else:
+                dt = 0.006
+            self.last_tick_time = now
 
         curr = self.vadj.get_value()
         diff = self.target - curr
 
-        if abs(diff) < 0.5:
+        if abs(diff) < 0.8:
             self._in_tick = True
             try:
                 self.vadj.set_value(self.target)
@@ -160,10 +219,12 @@ class SmoothScroller:
             self.tick_id = None
             return False
 
-        factor = 1.0 - math.exp(-self.decay * dt)
+        factor = 1.0 - math.exp(-getattr(self, "_current_decay", self.decay) * dt)
         move = diff * factor
-        if abs(move) < 0.2:
-            move = 0.2 if diff > 0 else -0.2
+        if abs(move) < 0.5:
+            move = 0.5 if diff > 0 else -0.5
+            if abs(move) >= abs(diff):
+                move = diff
 
         self._in_tick = True
         try:
@@ -461,7 +522,7 @@ class SettingsApp(Gtk.Window):
         self.scrolled_window.set_vexpand(True)
         self.scrolled_window.set_kinetic_scrolling(False)
         self.scrolled_window.set_overlay_scrolling(True)
-        self.smooth_scroller = SmoothScroller(self.scrolled_window, step=85.0, decay=24.0)
+        self.smooth_scroller = SmoothScroller(self.scrolled_window, step=140.0, decay=20.0)
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
@@ -588,7 +649,7 @@ class SettingsApp(Gtk.Window):
         side_scroll.set_vexpand(True)
         side_scroll.set_kinetic_scrolling(False)
         side_scroll.set_overlay_scrolling(True)
-        self.sidebar_scroller = SmoothScroller(side_scroll, step=60.0, decay=26.0)
+        self.sidebar_scroller = SmoothScroller(side_scroll, step=80.0, decay=22.0)
 
         self.nav_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         side_scroll.add(self.nav_vbox)
